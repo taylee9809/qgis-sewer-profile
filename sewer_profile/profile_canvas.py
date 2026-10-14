@@ -61,6 +61,9 @@ class ProfileCanvas(FigureCanvas):
     def plot(self, prof, title=''):
         self.prof = prof
         ax = self.ax
+        if getattr(self, '_lazy', None) is not None:
+            self._lazy.disconnect()
+            self._lazy = None
         ax.clear()
         ax.set_aspect('auto')
         ax.axis('on')
@@ -72,6 +75,8 @@ class ProfileCanvas(FigureCanvas):
             from .drawing_style import draw_sheet
             info = draw_sheet(ax, prof, vex=self.vex, labels=self.show_labels, title=title)
             self._Y = info['Y']
+            from .drawing_style import LazyText
+            self._lazy = LazyText(self, ax, info['texts'])
             self._fit_height(info['ytop'])
             self._vline = ax.axvline(0, color='#e01b24', lw=1.2, visible=False, zorder=9)
             self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5, zorder=10)
@@ -166,6 +171,11 @@ class ProfileCanvas(FigureCanvas):
                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.9), visible=False)
         self.draw_idle()
 
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if getattr(self, '_lazy', None) is not None:
+            self._lazy.update()
+
     def _fit_height(self, ytop):
         """도면식: 높이 전체가 보이게, 가로는 패널 비율만큼(가로세로 1:1 유지)"""
         ax = self.ax
@@ -190,7 +200,7 @@ class ProfileCanvas(FigureCanvas):
         self.draw_idle()
 
     # ---------------------------------------------------------------- cursor
-    def set_cursor(self, s):
+    def set_profile_cursor(self, s):
         if self.prof is None or self._vline is None:
             return
         if s is None:
@@ -243,7 +253,7 @@ class ProfileCanvas(FigureCanvas):
         if self.toolbar_active():
             return
         s = max(0.0, min(ev.xdata, self.prof.total))
-        self.set_cursor(s)
+        self.set_profile_cursor(s)
         self.cursorMoved.emit(s)
 
     def toolbar_active(self):

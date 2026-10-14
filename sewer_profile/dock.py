@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                                  QAbstractItemView, QMessageBox)
 from qgis.core import (QgsProject, QgsMapLayerProxyModel, QgsCoordinateTransform, QgsPointXY, QgsGeometry,
                        QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer)
-from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand
+from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsMapToolEmitPoint
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
@@ -54,8 +54,13 @@ class ProfileDock(QDockWidget):
         self.ed_expr = QLineEdit()
         self.ed_expr.setPlaceholderText("예: \"지구\" IN ('마사','황계(처리장아래)')")
         row.addWidget(self.ed_expr, 3)
-        self.bt_build = QPushButton('트리 만들기')
+        self.bt_build = QPushButton('트리 새로고침')
         row.addWidget(self.bt_build)
+        self.bt_pick = QPushButton('지도에서 고르기')
+        self.bt_pick.setCheckable(True)
+        self.bt_pick.setToolTip('켠 뒤 지도에서 관로를 클릭하면 그 관이 속한 구간이 트리에서 선택되고 종단이 그려진다.\n'
+                                '(QGIS 선택 도구로 노선을 선택해도 똑같이 동작)')
+        row.addWidget(self.bt_pick)
         lay.addLayout(row)
 
         # --- 본문: 트리 | 종단
@@ -134,6 +139,12 @@ class ProfileDock(QDockWidget):
 
         # --- 시그널
         self.bt_build.clicked.connect(self.build_tree)
+        self.bt_pick.toggled.connect(self._pick_toggled)
+        self.pick_tool = QgsMapToolEmitPoint(self.canvas_map)
+        self.pick_tool.canvasClicked.connect(self._picked)
+        self.pick_tool.deactivated.connect(lambda: self.bt_pick.setChecked(False))
+        self._sel_layer = None
+        self._focus_fid = None
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.itemDoubleClicked.connect(self.zoom_to_item)
         self.chk_down.toggled.connect(self.on_select)
@@ -148,6 +159,11 @@ class ProfileDock(QDockWidget):
         self.canvas_map.destinationCrsChanged.connect(self._update_xf)
 
         self._restore()
+        # 복원이 끝난 뒤에 연결(복원 중 build_tree→_save 가 덜 복원된 값을 저장하던 문제)
+        self.cb_line.layerChanged.connect(self._layer_changed)
+        self.ed_expr.editingFinished.connect(self.build_tree)
+        if isinstance(self.cb_line.currentLayer(), QgsVectorLayer):
+            self.build_tree()
 
     # ------------------------------------------------------------- settings
     def _restore(self):
@@ -160,6 +176,8 @@ class ProfileDock(QDockWidget):
                 lyr = next(iter(prj.mapLayersByName('노선(실시설계)')), None)
             if lyr is None and k == 'mh':
                 lyr = next(iter(prj.mapLayersByName('계획맨홀(실시설계)')), None)
+            if k == 'dem' and not lid:
+                lyr = None                     # DEM 은 사용자가 고를 때만
             if lyr is not None:
                 cb.setLayer(lyr)
             elif k != 'line':
@@ -186,6 +204,7 @@ class ProfileDock(QDockWidget):
             return
         self.layer = lyr
         self._update_xf()
+        self._watch_selection(lyr)
         self.net = Network(pipes)
         mh = self.cb_mh.currentLayer()
         self.mh = Manholes(mh) if isinstance(mh, QgsVectorLayer) else None
@@ -255,6 +274,13 @@ class ProfileDock(QDockWidget):
         self.title = '%s → %s   (관 %d개, %.1f m)' % (a, b, len(fids), self.prof.total)
         self.redraw()
         self._show_band()
+        if self._focus_fid is not None and self._focus_fid in fids:
+            k = fids.index(self._focus_fid)
+            x0, x1 = self.prof.seg[k]
+            sm = (x0 + x1) / 2
+            self.pc.set_profile_cursor(sm)
+            self.on_profile_cursor(sm)
+        self._focus_fid = None
 
     def redraw(self):
         self.pc.color_mode = self.cb_color.currentData()
@@ -285,6 +311,94 @@ class ProfileDock(QDockWidget):
                 break
             s = min(s + step, prof.total)
         prof.dem = out or None
+
+    # ------------------------------------------------- map → tree selection
+    def _layer_changed(self, lyr):
+        if isinstance(lyr, QgsVectorLayer):
+            self.build_tree()
+
+    def _watch_selection(self, lyr):
+        if self._sel_layer is not None:
+            try:
+                self._sel_layer.selectionChanged.disconnect(self._map_selection)
+            except Exception:
+                pass
+        self._sel_layer = lyr
+        lyr.selectionChanged.connect(self._map_selection)
+
+    def _map_selection(self, selected, deselected, clear):
+        if self.net is None or not self.isVisible():
+            return
+        fids = [f for f in self.layer.selectedFeatureIds() if f in self.net.run_of]
+        if not fids:
+            return
+        rids = list(dict.fromkeys(self.net.run_of[f] for f in fids))
+        self._focus_fid = fids[0] if len(fids) == 1 else None
+        self.select_runs(rids)
+
+    def _items_by_run(self):
+        out = {}
+        stack = [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]
+        while stack:
+            it = stack.pop()
+            rid = it.data(0, ROLE)
+            if rid is not None:
+                out[rid] = it
+            stack += [it.child(i) for i in range(it.childCount())]
+        return out
+
+    def select_runs(self, rids):
+        items = self._items_by_run()
+        self.tree.blockSignals(True)
+        self.tree.clearSelection()
+        last = None
+        for rid in rids:
+            it = items.get(rid)
+            if it is None:
+                continue
+            it.setSelected(True)
+            p = it.parent()
+            while p is not None:
+                p.setExpanded(True)
+                p = p.parent()
+            last = it
+        self.tree.blockSignals(False)
+        if last is not None:
+            self.tree.scrollToItem(last)
+            self.on_select()
+
+    def _pick_toggled(self, on):
+        if on:
+            self._prev_tool = self.canvas_map.mapTool()
+            self.canvas_map.setMapTool(self.pick_tool)
+        elif self.canvas_map.mapTool() is self.pick_tool:
+            prev = getattr(self, '_prev_tool', None)
+            if prev is not None:
+                self.canvas_map.setMapTool(prev)
+            else:
+                self.canvas_map.unsetMapTool(self.pick_tool)
+
+    def _picked(self, pt, button):
+        if self.net is None or self._xf_to_layer is None:
+            return
+        q = self._xf_to_layer.transform(pt)
+        tol = 12 * self.canvas_map.mapUnitsPerPixel()
+        best = None
+        for fid, p in self.net.pipes.items():
+            xs = [a for a, _ in p.pts]
+            ys = [b for _, b in p.pts]
+            if not (min(xs) - tol <= q.x() <= max(xs) + tol and min(ys) - tol <= q.y() <= max(ys) + tol):
+                continue
+            for (ax_, ay), (bx, by) in zip(p.pts, p.pts[1:]):
+                dx, dy = bx - ax_, by - ay
+                L2 = dx * dx + dy * dy
+                t = 0 if L2 == 0 else max(0.0, min(1.0, ((q.x() - ax_) * dx + (q.y() - ay) * dy) / L2))
+                d = ((q.x() - ax_ - dx * t) ** 2 + (q.y() - ay - dy * t) ** 2) ** 0.5
+                if d <= tol and (best is None or d < best[0]):
+                    best = (d, fid)
+        if best is None:
+            return
+        self.layer.selectByIds([best[1]])      # → _map_selection 이 트리·종단 갱신
 
     # ------------------------------------------------------------- map link
     def _update_xf(self):
@@ -333,15 +447,22 @@ class ProfileDock(QDockWidget):
         tol = 15 * self.canvas_map.mapUnitsPerPixel()
         if s is None or d > tol:
             self.marker.hide()
-            self.pc.set_cursor(None)
+            self.pc.set_profile_cursor(None)
             return
         x, y = self.prof.locate(s)
         self.marker.setCenter(self._xf_to_map.transform(QgsPointXY(x, y)))
         self.marker.show()
-        self.pc.set_cursor(s)
+        self.pc.set_profile_cursor(s)
 
     # -------------------------------------------------------------- cleanup
     def cleanup(self):
+        if self._sel_layer is not None:
+            try:
+                self._sel_layer.selectionChanged.disconnect(self._map_selection)
+            except Exception:
+                pass
+        if self.canvas_map.mapTool() is self.pick_tool:
+            self.canvas_map.unsetMapTool(self.pick_tool)
         try:
             self.canvas_map.xyCoordinates.disconnect(self.on_map_move)
         except Exception:

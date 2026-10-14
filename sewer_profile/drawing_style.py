@@ -4,13 +4,11 @@
 좌표: 가로 1 단위 = 1 m (H 1:1000), 세로 Y = 117 + (EL − DATUM) × VEX (VEX 5 = V 1:200)
 밴드(아래→위, 각 15): 측점 · 거리 · 추가거리 · 지반고 · 관저고 · 토피 · 구배
 그 위: 구간 표제 막대 y=111, 관번호 막대 y=129, 기준선 y=117, 45° 인출선(맨홀명·H)
-글자는 TextPath 로 도면 단위 높이 — 확대하면 CAD 처럼 같이 커진다.
+글자는 도면 단위 높이 — 확대 비율에 맞춰 보이는 것만 그린다(LazyText), CAD 처럼 같이 커진다.
 """
 import math
-from matplotlib.textpath import TextPath
 from matplotlib.font_manager import FontProperties
-from matplotlib.transforms import Affine2D
-from matplotlib.collections import PathCollection, LineCollection
+from matplotlib.collections import LineCollection
 from matplotlib.patches import Ellipse, Rectangle, Polygon, Circle
 
 BANDS = ['측    점', '거    리', '추가거리', '지 반 고', '관 저 고', '토    피', '구    배']
@@ -45,25 +43,83 @@ def _fp():
 
 
 class _Text(object):
-    """도면 단위 글자 모음 → 색별 PathCollection 1개"""
+    """도면 단위 글자 명세만 모은다. 실제 Text 는 LazyText 가 화면에 보이는 것만 만든다
+    (8.7 km 노선 글자 수천 개를 한 번에 도형화하면 40초 넘게 걸렸다)."""
 
     def __init__(self):
-        self.paths = {}
+        self.specs = []
 
     def add(self, x, y, s, h=2.5, rot=0, ha='left', va='bottom', color=C_TEXT):
-        if not s:
-            return
-        tp = TextPath((0, 0), s, size=h * 1.25, prop=_fp())
-        bb = tp.get_extents()
-        dx = {'left': -bb.x0, 'center': -(bb.x0 + bb.x1) / 2, 'right': -bb.x1}[ha]
-        dy = {'bottom': 0.0, 'center': -h / 2, 'top': -h, 'baseline': 0.0}[va]
-        tr = Affine2D().translate(dx, dy).rotate_deg(rot).translate(x, y)
-        self.paths.setdefault(color, []).append(tr.transform_path(tp))
+        if s:
+            self.specs.append((x, y, s, h, rot, ha, va, color))
 
     def flush(self, ax):
-        for c, ps in self.paths.items():
-            ax.add_collection(PathCollection(ps, facecolors=c, edgecolors='none', linewidths=0, zorder=6))
-        self.paths = {}
+        return self.specs
+
+
+class LazyText(object):
+    """도면 단위 높이 h 를 현재 확대 비율로 pt 환산해 보이는 범위의 글자만 그린다."""
+    MIN_PX = 3.0         # 이보다 작게 보이면 생략
+    MAX_N = 3000
+
+    def __init__(self, canvas, ax, specs):
+        self.canvas, self.ax, self.specs = canvas, ax, specs
+        self.arts = []
+        self._busy = False
+        import bisect
+        self._bisect = bisect
+        self.specs.sort(key=lambda t: t[0])
+        self.xs = [t[0] for t in self.specs]
+        self.cids = [ax.callbacks.connect('xlim_changed', self.update),
+                     ax.callbacks.connect('ylim_changed', self.update)]
+
+    def disconnect(self):
+        for c in self.cids:
+            try:
+                self.ax.callbacks.disconnect(c)
+            except Exception:
+                pass
+        self.clear()
+
+    def clear(self):
+        for a in self.arts:
+            try:
+                a.remove()
+            except Exception:
+                pass
+        self.arts = []
+
+    def update(self, *_):
+        if self._busy:
+            return
+        self._busy = True
+        try:
+            ax = self.ax
+            self.clear()
+            x0, x1 = ax.get_xlim()
+            y0, y1 = ax.get_ylim()
+            bb = ax.get_window_extent()
+            if bb.width <= 0 or x1 <= x0:
+                return
+            ppu = bb.width / (x1 - x0)                 # 픽셀 / 도면단위
+            pt = 72.0 / self.canvas.figure.dpi
+            pad = 40
+            i0 = self._bisect.bisect_left(self.xs, x0 - pad)
+            i1 = self._bisect.bisect_right(self.xs, x1 + pad)
+            cnt = 0
+            for x, y, s, h, rot, ha, va, color in self.specs[i0:i1]:
+                if h * ppu < self.MIN_PX or not (y0 - pad <= y <= y1 + pad):
+                    continue
+                fp = _fp().copy()
+                fp.set_size(h * 1.12 * ppu * pt)
+                self.arts.append(ax.text(x, y, s, fontproperties=fp, rotation=rot,
+                                         rotation_mode='anchor', ha=ha, va=va, color=color,
+                                         zorder=6, clip_on=True))
+                cnt += 1
+                if cnt >= self.MAX_N:
+                    break
+        finally:
+            self._busy = False
 
 
 def _fmt_sta(s):
@@ -376,9 +432,9 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
     ytop = max([max(p[1] for p in l) for l in lead] + [ytop_rul]) + 12
     if title:
         T.add(total / 2, ytop, title, h=5.0, ha='center', va='bottom')
-    T.flush(ax)
+    specs = T.flush(ax)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xlim(-35, total + 10)
     ax.set_ylim(-12, ytop + 10)
     ax.axis('off')
-    return dict(Y=Y, datum=datum, ytop=ytop, breaks=breaks)
+    return dict(Y=Y, datum=datum, ytop=ytop, breaks=breaks, texts=specs)
