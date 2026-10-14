@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
+import json
 from qgis.PyQt.QtCore import Qt, QSettings, QPointF, QRectF
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
                              QIcon, QPixmap, QPainter, QPen, QPolygonF)
@@ -54,6 +55,23 @@ def _icon_camera(px=24):
     pa.drawPolyline(QPolygonF([QPointF(7.5, 7.0), QPointF(9.2, 4.2),
                                QPointF(14.8, 4.2), QPointF(16.5, 7.0)]))
     pa.drawEllipse(QPointF(px / 2.0, 13.8), 3.5, 3.5)
+    pa.end()
+    return QIcon(pm)
+
+
+def _icon_pen(px=24):
+    """표시(펜) — 비스듬한 펜"""
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pa = QPainter(pm)
+    pa.setRenderHint(QPainter.Antialiasing)
+    pa.setPen(Qt.NoPen)
+    pa.setBrush(QColor('#2b2b2b'))
+    pa.drawPolygon(QPolygonF([QPointF(4.0, 20.0), QPointF(6.0, 14.5),
+                              QPointF(15.5, 5.0), QPointF(19.0, 8.5),
+                              QPointF(9.5, 18.0)]))
+    pa.setPen(_pen(1.6))
+    pa.drawLine(QPointF(14.0, 6.5), QPointF(17.5, 10.0))
     pa.end()
     return QIcon(pm)
 
@@ -250,10 +268,15 @@ class ProfileDock(QDockWidget):
                 a.setText('캡처')
                 a.setIcon(_icon_camera())
                 a.setToolTip('캡처 — 지금 화면을 그림 파일로 저장')
+        self.act_mark = QAction(_icon_pen(), '표시', self.tb)
+        self.act_mark.setCheckable(True)
+        self.act_mark.setToolTip('표시 — 켜고 종단을 클릭하면 그 자리에 마크를 찍는다.\n'
+                                 '마크를 다시 클릭하면 지워진다. 관 번호와 위치로 저장돼 다시 열어도 남는다.')
         self.bt_big = QAction(_icon_expand(), '크게 보기', self.tb)
         self.bt_big.setCheckable(True)
         self.bt_big.setToolTip('크게 보기 — 패널을 화면 가득. 다시 누르거나 Esc 로 원래 자리.')
         acts = self.tb.actions()
+        self.tb.insertAction(acts[-1], self.act_mark)
         self.tb.insertSeparator(acts[-1])
         self.tb.insertAction(acts[-1], self.bt_big)
         self.pc.toolbar = self.tb
@@ -290,6 +313,8 @@ class ProfileDock(QDockWidget):
         self._focus_fid = None
         self._dot = _dot_icon()
         self._dot_run = None               # 커서가 있는 구간(트리 빨간 점)
+        self.marks = {}                    # 표시(펜) — {관fid: [관 시점에서의 거리(m), ...]}
+        self._mark_markers = []            # 지도 위 마크
         self._item_map = {}
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.itemDoubleClicked.connect(self.zoom_to_item)
@@ -300,6 +325,8 @@ class ProfileDock(QDockWidget):
         self.cb_style.currentIndexChanged.connect(self.redraw)
         self.cb_vex.currentIndexChanged.connect(self.redraw)
         self.pc.cursorMoved.connect(self.on_profile_cursor)
+        self.act_mark.toggled.connect(self._mark_mode)
+        self.pc.markClicked.connect(self.on_mark_click)
         self.pc.cursorLeft.connect(self.marker.hide)
         self.pc.cursorLeft.connect(lambda: self.mark_cursor_run(None))
         self.canvas_map.xyCoordinates.connect(self.on_map_move)
@@ -350,6 +377,7 @@ class ProfileDock(QDockWidget):
             QMessageBox.warning(self, '종단도', '노선을 읽지 못했습니다: %s' % e)
             return
         self.layer = lyr
+        self._load_marks()
         self._update_xf()
         self._watch_selection(lyr)
         self.net = Network(pipes)
@@ -464,11 +492,13 @@ class ProfileDock(QDockWidget):
             seq = seq[:-1] + net.downstream_chain(seq[-1])
         fids = [f for rid in seq for f in net.runs[rid]['pipes']]
         self.prof = Profile(net, fids, self.mh)
+        self._apply_marks(self.prof)
         self._sample_dem(self.prof)
         a, b = net.pipes[fids[0]].name, net.pipes[fids[-1]].name
         self.title = '%s → %s   (관 %d개, %.1f m)' % (a, b, len(fids), self.prof.total)
         self.redraw()
         self._show_band()
+        self._show_marks_on_map()
         if self._focus_fid is not None and self._focus_fid in fids:
             k = fids.index(self._focus_fid)
             x0, x1 = self.prof.seg[k]
@@ -476,6 +506,83 @@ class ProfileDock(QDockWidget):
             self.pc.set_profile_cursor(sm)
             self.on_profile_cursor(sm)
         self._focus_fid = None
+
+    # ------------------------------------------------------------ 표시(펜)
+    def _mark_mode(self, on):
+        self.pc.mark_mode = on
+        self.pc.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+
+    def _marks_key(self):
+        return KEY + 'marks/' + (self.layer.id() if self.layer else '')
+
+    def _load_marks(self):
+        try:
+            raw = QSettings().value(self._marks_key(), '')
+            self.marks = {int(k): list(v) for k, v in json.loads(raw or '{}').items()}
+        except Exception:
+            self.marks = {}
+
+    def _save_marks(self):
+        try:
+            QSettings().setValue(self._marks_key(),
+                                 json.dumps({str(k): v for k, v in self.marks.items() if v}))
+        except Exception:
+            pass
+
+    def _apply_marks(self, prof):
+        """저장된 마크 중 이 종단에 있는 것을 측점으로 바꿔 prof.marks 에 싣는다"""
+        out = []
+        for i, p in enumerate(prof.pipes):
+            for off in self.marks.get(p.fid, []):
+                x0, x1 = prof.seg[i]
+                out.append(min(max(x0 + off, x0), x1))
+        out.sort()
+        prof.marks = [(s, k) for k, s in enumerate(out, 1)]
+
+    def on_mark_click(self, s):
+        """종단 클릭 — 가까운 마크가 있으면 지우고, 없으면 새로 찍는다"""
+        if self.prof is None:
+            return
+        tol = max(self.prof.total * 0.004, 1.0)
+        for s0, _ in getattr(self.prof, 'marks', []):
+            if abs(s0 - s) <= tol:
+                i = self.prof.pipe_at(s0)
+                fid = self.prof.pipes[i].fid
+                off = s0 - self.prof.seg[i][0]
+                lst = [o for o in self.marks.get(fid, []) if abs(o - off) > 0.5]
+                if lst:
+                    self.marks[fid] = lst
+                else:
+                    self.marks.pop(fid, None)
+                break
+        else:
+            i = self.prof.pipe_at(s)
+            fid = self.prof.pipes[i].fid
+            self.marks.setdefault(fid, []).append(s - self.prof.seg[i][0])
+        self._save_marks()
+        self._apply_marks(self.prof)
+        self.redraw()
+        self._show_marks_on_map()
+
+    def _show_marks_on_map(self):
+        for mk in self._mark_markers:
+            try:
+                self.canvas_map.scene().removeItem(mk)
+            except Exception:
+                pass
+        self._mark_markers = []
+        if self.prof is None or self._xf_to_map is None:
+            return
+        for s, _ in getattr(self.prof, 'marks', []):
+            x, y = self.prof.locate(s)
+            mk = QgsVertexMarker(self.canvas_map)
+            mk.setColor(QColor(232, 89, 12))
+            mk.setIconType(QgsVertexMarker.ICON_INVERTED_TRIANGLE)
+            mk.setIconSize(11)
+            mk.setPenWidth(3)
+            mk.setCenter(self._xf_to_map.transform(QgsPointXY(x, y)))
+            mk.show()
+            self._mark_markers.append(mk)
 
     def redraw(self):
         if self.cb_style.currentData() == 'drawing' and self.cb_color.currentData() != 'kind':
@@ -681,6 +788,12 @@ class ProfileDock(QDockWidget):
             self.canvas_map.destinationCrsChanged.disconnect(self._update_xf)
         except Exception:
             pass
+        for g in list(self._mark_markers):
+            try:
+                self.canvas_map.scene().removeItem(g)
+            except Exception:
+                pass
+        self._mark_markers = []
         for g in (self.band, self.marker):
             try:
                 self.canvas_map.scene().removeItem(g)

@@ -3,6 +3,7 @@
 from qgis.PyQt.QtCore import pyqtSignal
 import matplotlib
 from matplotlib.figure import Figure
+from matplotlib.transforms import blended_transform_factory
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 except ImportError:  # pragma: no cover
@@ -26,6 +27,7 @@ JUDGE_LABEL = {'GOOD': 'GOOD (기준 만족)', 'LESS0.6': 'LESS0.6 (유속<0.6)'
 JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유량없음', '미판정',
                '자연유하', '압송']
 NOJUDGE = '#4b5563'         # 판정값 없음 — 지반(회색)과 구분되게 진하게
+MARK = '#e8590c'            # 표시(펜) 마크
 GROUND = '#878d96'          # 지반선 — 중립 회색(색은 관에만 주려고)
 EARTH = '#f3f4f6'           # 지반 아래
 from .drawing_style import C_PIPE as PIPE, C_PRESS as PRESS   # 성과품과 같은 색
@@ -41,6 +43,7 @@ AXIS = '#dcdfe4'
 class ProfileCanvas(FigureCanvas):
     cursorMoved = pyqtSignal(float)     # 종단 위 마우스 → 누가거리
     cursorLeft = pyqtSignal()
+    markClicked = pyqtSignal(float)     # 표시 모드에서 클릭 → 누가거리
 
     def __init__(self, parent=None):
         self.fig = Figure(figsize=(8, 3), tight_layout=True)
@@ -51,12 +54,14 @@ class ProfileCanvas(FigureCanvas):
         self.color_mode = 'kind'
         self.show_labels = True
         self.style = 'simple'      # 'simple' | 'drawing'
+        self.mark_mode = False     # 표시(펜) 모드
         self.vex = 5.0
         self._Y = None
         self._vline = None
         self._dot = None
         self._txt = None
         self.mpl_connect('motion_notify_event', self._on_move)
+        self.mpl_connect('button_press_event', self._on_click)
         self.mpl_connect('axes_leave_event', lambda e: self.cursorLeft.emit())
         self.mpl_connect('scroll_event', self._on_scroll)
         self._empty()
@@ -90,6 +95,7 @@ class ProfileCanvas(FigureCanvas):
             self._Y = info['Y']
             from .drawing_style import LazyText
             self._lazy = LazyText(self, ax, info['texts'])
+            self._draw_marks(prof)
             self._fit_height(info['ytop'])
             self._vline = ax.axvline(0, color='#e01b24', lw=1.2, visible=False, zorder=9)
             self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5, zorder=10)
@@ -193,12 +199,13 @@ class ProfileCanvas(FigureCanvas):
             ax.spines[sp].set_color(AXIS)
             ax.spines[sp].set_linewidth(0.8)
         ax.set_title(title, fontsize=10.5, color=INK)
+        self._draw_marks(prof)
         if used:
             from matplotlib.patches import Patch
             keys = sorted(used, key=lambda k: JUDGE_ORDER.index(k) if k in JUDGE_ORDER else 99)
             hs = [Patch(facecolor=used[k], edgecolor='none', label=JUDGE_LABEL.get(k, k))
                   for k in keys]
-            leg = ax.legend(handles=hs, loc='upper right', fontsize=7.5, frameon=True,
+            leg = ax.legend(handles=hs, loc='best', fontsize=7.5, frameon=True,
                             framealpha=0.95, edgecolor=AXIS, facecolor='white',
                             borderpad=0.5, labelspacing=0.35, handlelength=1.1,
                             handleheight=0.9, borderaxespad=0.4)
@@ -210,6 +217,18 @@ class ProfileCanvas(FigureCanvas):
         self._txt = ax.text(0, 0, '', fontsize=7, va='top', ha='left',
                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.9), visible=False)
         self.draw_idle()
+
+    def _draw_marks(self, prof):
+        """표시(펜) 마크 — prof.marks = [(측점, 번호)]"""
+        for s, lab in getattr(prof, 'marks', None) or []:
+            ax = self.ax
+            tr = blended_transform_factory(ax.transData, ax.transAxes)
+            ax.axvline(s, color=MARK, lw=1.0, ls=(0, (5, 3)), zorder=8)
+            ax.plot([s], [0.985], marker='v', ms=8, color=MARK, transform=tr,
+                    clip_on=False, zorder=12)
+            ax.text(s, 0.955, str(lab), transform=tr, ha='center', va='top',
+                    fontsize=7.5, color='white', zorder=13,
+                    bbox=dict(boxstyle='circle,pad=0.22', fc=MARK, ec='none'))
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
@@ -312,6 +331,13 @@ class ProfileCanvas(FigureCanvas):
         self._txt.set_ha('left' if s < (x0 + x1) / 2 else 'right')
         self._txt.set_visible(True)
         self.draw_idle()
+
+    def _on_click(self, ev):
+        if not self.mark_mode or self.prof is None or ev.inaxes is not self.ax:
+            return
+        if ev.button != 1 or ev.xdata is None or self.toolbar_active():
+            return
+        self.markClicked.emit(max(0.0, min(ev.xdata, self.prof.total)))
 
     def _on_move(self, ev):
         if self.prof is None or ev.inaxes is not self.ax or ev.xdata is None:
