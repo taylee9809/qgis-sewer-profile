@@ -3,7 +3,7 @@
 from qgis.PyQt.QtCore import Qt, QSettings, QPointF
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
                              QIcon, QPixmap, QPainter, QPen, QPolygonF)
-from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
+from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QAction,
                                  QTreeWidgetItem, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
                                  QAbstractItemView, QMessageBox, QHeaderView, QShortcut,
                                  QApplication)
@@ -34,6 +34,42 @@ def _dot_icon(color=CUR_C, px=10):
     pa.setPen(Qt.NoPen)
     pa.setBrush(color)
     pa.drawEllipse(1, 1, px - 2, px - 2)
+    pa.end()
+    return QIcon(pm)
+
+
+def _pen(w=2.4):
+    return QPen(QColor('#2b2b2b'), w, Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin)
+
+
+def _icon_capture(px=24):
+    """캡처 — 「 」 모서리 표시"""
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pa = QPainter(pm)
+    pa.setRenderHint(QPainter.Antialiasing)
+    pa.setPen(_pen())
+    m, L, e = 3.5, 8.5, px - 3.5
+    pa.drawPolyline(QPolygonF([QPointF(m + L, m), QPointF(m, m), QPointF(m, m + L)]))
+    pa.drawPolyline(QPolygonF([QPointF(e - L, e), QPointF(e, e), QPointF(e, e - L)]))
+    pa.end()
+    return QIcon(pm)
+
+
+def _icon_expand(px=24):
+    """크게 보기 — 대각 양방향 화살표"""
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pa = QPainter(pm)
+    pa.setRenderHint(QPainter.Antialiasing)
+    pa.setPen(_pen(2.2))
+    m, e = 3.5, px - 3.5
+    pa.drawLine(QPointF(m + 2.5, e - 2.5), QPointF(e - 2.5, m + 2.5))
+    pa.setPen(Qt.NoPen)
+    pa.setBrush(QColor('#2b2b2b'))
+    a = 8.0
+    pa.drawPolygon(QPolygonF([QPointF(e, m), QPointF(e - a, m), QPointF(e, m + a)]))
+    pa.drawPolygon(QPolygonF([QPointF(m, e), QPointF(m + a, e), QPointF(m, e - a)]))
     pa.end()
     return QIcon(pm)
 
@@ -106,10 +142,6 @@ class ProfileDock(QDockWidget):
         row.addWidget(self.ed_expr, 3)
         self.bt_build = QPushButton('트리 새로고침')
         row.addWidget(self.bt_build)
-        self.bt_big = QPushButton('크게 보기')
-        self.bt_big.setCheckable(True)
-        self.bt_big.setToolTip('종단도 패널을 화면 가득 띄운다. 다시 누르거나 Esc 로 원래 자리.')
-        row.addWidget(self.bt_big)
         lay.addLayout(row)
 
         # --- 본문: 트리 | 종단
@@ -198,7 +230,14 @@ class ProfileDock(QDockWidget):
                 a.setToolTip('확대 — 영역을 드래그 (휠로도 확대·축소)')
             elif t.startswith('Save'):
                 a.setText('캡처')
+                a.setIcon(_icon_capture())
                 a.setToolTip('캡처 — 지금 화면을 그림 파일로 저장')
+        self.bt_big = QAction(_icon_expand(), '크게 보기', self.tb)
+        self.bt_big.setCheckable(True)
+        self.bt_big.setToolTip('크게 보기 — 패널을 화면 가득. 다시 누르거나 Esc 로 원래 자리.')
+        acts = self.tb.actions()
+        self.tb.insertSeparator(acts[-1])
+        self.tb.insertAction(acts[-1], self.bt_big)
         self.pc.toolbar = self.tb
         rl.addWidget(self.tb)
         rl.addWidget(self.pc)
@@ -310,7 +349,7 @@ class ProfileDock(QDockWidget):
             r = net.runs[rid]
             fids = r['pipes']
             pump = any('압송' in (net.pipes[i].kind or '') for i in fids)
-            it = QTreeWidgetItem([net.run_short(r) + ('  ⇡' if pump else ''),
+            it = QTreeWidgetItem([net.run_short(r) + ('  (압송)' if pump else ''),
                                   format(r['length'], ',.1f')])
             it.setData(0, ROLE, rid)
             it.setData(0, ROLE_TXT, ' '.join(net.pipes[i].name for i in fids).upper())
@@ -322,7 +361,7 @@ class ProfileDock(QDockWidget):
             tip = '%s\n관 %d개 · 연장 %.1f m · 본선 상류연장 %.1f m' % (
                 net.run_label(r), len(fids), r['length'], r['up_length'])
             if pump:
-                tip += '\n압송 포함 (⇡)'
+                tip += '\n압송 포함'
             z0 = net.pipes[fids[0]].zone
             if z0:
                 tip += '\n지구: %s' % z0

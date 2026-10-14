@@ -25,8 +25,9 @@ GROUND = '#8d7f6e'          # 지반선
 EARTH = '#f7f3ec'           # 지반 아래
 PIPE = '#4a7ba7'            # 자연유하
 PRESS = '#b5616b'           # 압송
-MH = '#98a1ab'              # 맨홀
-OBS = '#7b828c'             # 지장물
+MH = '#2b2b2b'              # 맨홀·지장물 세로선(얇은 검정 점선)
+VSTEM = (0, (2, 2))         # 점선 간격
+OBS = '#2b2b2b'             # 지장물
 INK = '#3c4350'             # 글자
 INK2 = '#7b828c'            # 흐린 글자
 GRID = '#e9ebef'
@@ -139,8 +140,8 @@ class ProfileCanvas(FigureCanvas):
                     bot = o['el'] + 0.30          # flo 저면EL = 관저 − 0.30 규약
                     top = bot + d
                     mk = 'o'
-                ax.plot([xo, xo], [bot, top], color=OBS, lw=1.4, solid_capstyle='butt', zorder=6)
-                ax.plot([xo], [(bot + top) / 2], marker=mk, mfc='white', mec=OBS, ms=6.5, mew=1.0, zorder=6)
+                ax.plot([xo, xo], [bot, top], color=OBS, lw=0.7, ls=VSTEM, zorder=6)
+                ax.plot([xo], [(bot + top) / 2], marker=mk, mfc='white', mec=OBS, ms=5.5, mew=0.8, zorder=6)
                 ymin.append(o['el'])
                 ymax.append(top)
                 if self.show_labels:
@@ -158,8 +159,7 @@ class ProfileCanvas(FigureCanvas):
             bot = min(ils) if ils else None
             top = n['gl']
             if bot is not None and top is not None:
-                ax.plot([n['x'], n['x']], [bot, top], color=MH, lw=1.0, zorder=6,
-                        solid_capstyle='butt')
+                ax.plot([n['x'], n['x']], [bot, top], color=MH, lw=0.7, ls=VSTEM, zorder=6)
                 if n['il_in'] is not None and n['il_out'] is not None and n['il_in'] - n['il_out'] > 0.05:
                     ax.plot([n['x']], [n['il_in']], marker='_', color='#bf4a44', ms=7, mew=1.4, zorder=7)
             if self.show_labels and n['name'] and top is not None:
