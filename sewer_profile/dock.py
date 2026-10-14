@@ -11,7 +11,7 @@ from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsMap
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
-from .network import read_pipes, Network, Profile, Manholes
+from .network import read_pipes, Network, Profile, Manholes, short_range
 from .profile_canvas import ProfileCanvas
 
 ROLE = Qt.UserRole + 1
@@ -95,6 +95,9 @@ class ProfileDock(QDockWidget):
         hd.setSectionResizeMode(1, QHeaderView.Fixed)
         self.tree.setColumnWidth(1, 64)
         self.tree.headerItem().setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        # 선택 표시를 지도 선택색과 같은 노랑으로 (지도에서 고른 구간이 트리에서 바로 보이게)
+        self.tree.setStyleSheet('QTreeWidget::item:selected{background:#ffd21e;}'
+                                'QTreeWidget::item:selected:!active{background:#ffd21e;}')
         self.mono = QFont('Consolas')
         self.mono.setStyleHint(QFont.Monospace)
         ll.addWidget(self.tree)
@@ -170,6 +173,7 @@ class ProfileDock(QDockWidget):
         self.pick_tool.deactivated.connect(lambda: self.bt_pick.setChecked(False))
         self._sel_layer = None
         self._focus_fid = None
+        self._hl_fids = None               # 지도에서 고른 관 → 종단 노란 강조
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.itemDoubleClicked.connect(self.zoom_to_item)
         self.chk_down.toggled.connect(self.on_select)
@@ -340,6 +344,7 @@ class ProfileDock(QDockWidget):
             seq = seq[:-1] + net.downstream_chain(seq[-1])
         fids = [f for rid in seq for f in net.runs[rid]['pipes']]
         self.prof = Profile(net, fids, self.mh)
+        self.prof.hl = self._hl_spans(self.prof, fids, rids)
         self._sample_dem(self.prof)
         a, b = net.pipes[fids[0]].name, net.pipes[fids[-1]].name
         self.title = '%s → %s   (관 %d개, %.1f m)' % (a, b, len(fids), self.prof.total)
@@ -352,6 +357,28 @@ class ProfileDock(QDockWidget):
             self.pc.set_profile_cursor(sm)
             self.on_profile_cursor(sm)
         self._focus_fid = None
+
+    def _hl_spans(self, prof, fids, rids):
+        """종단에서 노랗게 칠할 구간 — 지도에서 고른 관, 없으면 트리에서 고른 구간.
+        그린 전체가 선택이면(= 구분할 게 없으면) 칠하지 않는다."""
+        allf = set(fids)
+        sel = set(self._hl_fids or ()) & allf
+        if not sel:
+            sel = set(f for rid in rids for f in self.net.runs[rid]['pipes']) & allf
+        if not sel or len(sel) == len(allf):
+            return []
+        out, i, n = [], 0, len(fids)
+        while i < n:
+            if fids[i] not in sel:
+                i += 1
+                continue
+            j = i
+            while j + 1 < n and fids[j + 1] in sel:
+                j += 1
+            out.append((prof.seg[i][0], prof.seg[j][1],
+                        short_range(prof.pipes[i].name, prof.pipes[j].name)))
+            i = j + 1
+        return out
 
     def redraw(self):
         self.pc.color_mode = self.cb_color.currentData()
@@ -404,6 +431,7 @@ class ProfileDock(QDockWidget):
         if not fids:
             return
         rids = list(dict.fromkeys(self.net.run_of[f] for f in fids))
+        self._hl_fids = set(fids)
         self._focus_fid = fids[0] if len(fids) == 1 else None
         self.select_runs(rids)
 
