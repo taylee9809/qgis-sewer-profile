@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
-from qgis.PyQt.QtCore import Qt, QSettings, QPointF
+from qgis.PyQt.QtCore import Qt, QSettings, QPointF, QRectF
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
                              QIcon, QPixmap, QPainter, QPen, QPolygonF)
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QAction,
@@ -42,8 +42,24 @@ def _pen(w=2.4):
     return QPen(QColor('#2b2b2b'), w, Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin)
 
 
-def _icon_capture(px=24):
-    """캡처 — 「 」 모서리 표시"""
+def _icon_camera(px=24):
+    """캡처 — 카메라"""
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pa = QPainter(pm)
+    pa.setRenderHint(QPainter.Antialiasing)
+    pa.setPen(_pen(1.8))
+    pa.setBrush(Qt.NoBrush)
+    pa.drawRoundedRect(QRectF(2.5, 7.0, px - 5.0, px - 11.0), 2.0, 2.0)
+    pa.drawPolyline(QPolygonF([QPointF(7.5, 7.0), QPointF(9.2, 4.2),
+                               QPointF(14.8, 4.2), QPointF(16.5, 7.0)]))
+    pa.drawEllipse(QPointF(px / 2.0, 13.8), 3.5, 3.5)
+    pa.end()
+    return QIcon(pm)
+
+
+def _icon_crop(px=24):
+    """영역 확대 — 「 」 모서리 표시"""
     pm = QPixmap(px, px)
     pm.fill(Qt.transparent)
     pa = QPainter(pm)
@@ -190,7 +206,7 @@ class ProfileDock(QDockWidget):
             opt.addWidget(wg, 1 if wg is arrow else 0)
         ll.addLayout(opt)
         opt2 = QHBoxLayout()
-        opt2.addWidget(QLabel('관 색'))
+        opt2.addWidget(QLabel('관로'))
         self.cb_color = QComboBox()
         self.cb_color.addItem('수리계산 결과', 'judge')
         self.cb_color.addItem('자연유하 · 압송', 'kind')
@@ -228,10 +244,11 @@ class ProfileDock(QDockWidget):
             if t.startswith('Pan'):
                 a.setToolTip('이동 — 드래그로 화면 옮기기 (끄면 커서 추적 재개)')
             elif t.startswith('Zoom'):
+                a.setIcon(_icon_crop())
                 a.setToolTip('확대 — 영역을 드래그 (휠로도 확대·축소)')
             elif t.startswith('Save'):
                 a.setText('캡처')
-                a.setIcon(_icon_capture())
+                a.setIcon(_icon_camera())
                 a.setToolTip('캡처 — 지금 화면을 그림 파일로 저장')
         self.bt_big = QAction(_icon_expand(), '크게 보기', self.tb)
         self.bt_big.setCheckable(True)
@@ -461,6 +478,10 @@ class ProfileDock(QDockWidget):
         self._focus_fid = None
 
     def redraw(self):
+        if self.cb_style.currentData() == 'drawing' and self.cb_color.currentData() != 'kind':
+            self.cb_color.blockSignals(True)          # 성과품 서식은 자연유하·압송 색 고정
+            self.cb_color.setCurrentIndex(self.cb_color.findData('kind'))
+            self.cb_color.blockSignals(False)
         self.pc.color_mode = self.cb_color.currentData()
         self.pc.show_labels = self.chk_lab.isChecked()
         self.pc.style = self.cb_style.currentData()

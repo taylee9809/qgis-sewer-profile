@@ -23,12 +23,12 @@ JUDGE_COLOR = {'GOOD': '#3f8f5f', 'LESS0.6': '#c6882c', '유량없음': '#9aa3ad
                '만관초과': '#bf4a44', 'UPPR3.0': '#7a6bb0', '역경사/0': '#bf4a44'}
 JUDGE_LABEL = {'GOOD': 'GOOD (기준 만족)', 'LESS0.6': 'LESS0.6 (유속<0.6)',
                'UPPR3.0': 'UPPR3.0 (유속>3.0)'}
-JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유량없음', '미판정', '압송']
+JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유량없음', '미판정',
+               '자연유하', '압송']
 NOJUDGE = '#4b5563'         # 판정값 없음 — 지반(회색)과 구분되게 진하게
 GROUND = '#878d96'          # 지반선 — 중립 회색(색은 관에만 주려고)
 EARTH = '#f3f4f6'           # 지반 아래
-PIPE = '#4a7ba7'            # 자연유하
-PRESS = '#b5616b'           # 압송
+from .drawing_style import C_PIPE as PIPE, C_PRESS as PRESS   # 성과품과 같은 색
 MH = '#2b2b2b'              # 맨홀·지장물 세로선(얇은 검정 점선)
 VSTEM = (0, (2, 2))         # 점선 간격
 OBS = '#2b2b2b'             # 지장물
