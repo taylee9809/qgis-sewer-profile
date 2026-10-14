@@ -3,7 +3,6 @@
 from qgis.PyQt.QtCore import pyqtSignal
 import matplotlib
 from matplotlib.figure import Figure
-from matplotlib.transforms import blended_transform_factory
 try:
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 except ImportError:  # pragma: no cover
@@ -21,8 +20,6 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 
 JUDGE_COLOR = {'GOOD': '#2e9d3a', 'LESS0.6': '#e08a00', '유량없음': '#9e9e9e',
                '만관초과': '#d62728', 'UPPR3.0': '#9c27b0', '역경사/0': '#d62728'}
-HL = '#ffd21e'              # 지도에서 고른 구간(지도 선택색 노랑에 맞춤)
-HL_EDGE = '#d99e00'
 GROUND = '#8b5a2b'
 PIPE = '#1f6fd1'
 PRESS = '#c2185b'
@@ -80,7 +77,6 @@ class ProfileCanvas(FigureCanvas):
             self._Y = info['Y']
             from .drawing_style import LazyText
             self._lazy = LazyText(self, ax, info['texts'])
-            self._draw_hl(prof)
             self._fit_height(info['ytop'])
             self._vline = ax.axvline(0, color='#e01b24', lw=1.2, visible=False, zorder=9)
             self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5, zorder=10)
@@ -169,28 +165,11 @@ class ProfileCanvas(FigureCanvas):
         ax.tick_params(labelsize=7)
         ax.grid(True, lw=0.3, alpha=0.5)
         ax.set_title(title, fontsize=9)
-        self._draw_hl(prof)
         self._vline = ax.axvline(0, color='#e01b24', lw=1.0, visible=False)
         self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5)
         self._txt = ax.text(0, 0, '', fontsize=7, va='top', ha='left',
                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.9), visible=False)
         self.draw_idle()
-
-    def _draw_hl(self, prof):
-        """지도(또는 트리)에서 고른 부분을 종단 위에 노랗게 — prof.hl = [(x0, x1, 라벨)]"""
-        hl = getattr(prof, 'hl', None)
-        if not hl:
-            return
-        ax = self.ax
-        tr = blended_transform_factory(ax.transData, ax.transAxes)
-        for x0, x1, lab in hl:
-            ax.axvspan(x0, x1, color=HL, alpha=0.22, lw=0, zorder=0)
-            for x in (x0, x1):
-                ax.axvline(x, color=HL_EDGE, lw=0.9, ls=(0, (4, 3)), zorder=0.6)
-            if lab:
-                ax.text((x0 + x1) / 2.0, 0.998, lab, transform=tr, ha='center', va='top',
-                        fontsize=7.5, color='#6b4e00', zorder=12,
-                        bbox=dict(boxstyle='round,pad=0.25', fc=HL, ec=HL_EDGE, lw=0.6, alpha=0.95))
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
