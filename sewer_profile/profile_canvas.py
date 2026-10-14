@@ -67,6 +67,7 @@ class ProfileCanvas(FigureCanvas):
         ax.clear()
         ax.set_aspect('auto')
         ax.axis('on')
+        self.fig.set_tight_layout(self.style != 'drawing')   # 도면식은 꽉 채우고, 간단식은 축 여백
         self._Y = None
         if prof is None or not prof.pipes:
             self._empty()
@@ -173,6 +174,7 @@ class ProfileCanvas(FigureCanvas):
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
+        self.refit_width()
         if getattr(self, '_lazy', None) is not None:
             self._lazy.update()
 
@@ -180,13 +182,38 @@ class ProfileCanvas(FigureCanvas):
         """도면식: 높이 전체가 보이게, 가로는 패널 비율만큼(가로세로 1:1 유지)"""
         ax = self.ax
         y0, y1 = -12.0, ytop + 10.0
-        bb = ax.get_position()
-        wpx = max(self.width() * bb.width, 50)
-        hpx = max(self.height() * bb.height, 50)
-        W = (y1 - y0) * wpx / hpx
-        x0 = -35.0
+        wpx, hpx = self._axes_px()
+        W = max((y1 - y0) * wpx / hpx, 60.0)
         ax.set_ylim(y0, y1)
-        ax.set_xlim(x0, x0 + max(W, 60.0))
+        if W > self.prof.total + 70.0:        # 종단이 화면보다 짧으면 가운데로
+            c = self.prof.total / 2.0
+            ax.set_xlim(c - W / 2.0, c + W / 2.0)
+        else:
+            ax.set_xlim(-35.0, -35.0 + W)
+
+    def _axes_px(self):
+        """도면식은 축 눈금이 없으니 그림틀을 캔버스에 꽉 채운다 → 여백 낭비 제거"""
+        ax = self.ax
+        if self.style == 'drawing':
+            self.fig.set_tight_layout(False)
+            ax.set_position([0.004, 0.006, 0.992, 0.988])
+        else:
+            self.fig.set_tight_layout(True)
+        bb = ax.get_position()
+        return (max(self.width() * bb.width, 50), max(self.height() * bb.height, 50))
+
+    def refit_width(self):
+        """창 크기가 바뀌어도 가로세로 1:1 유지(세로 배율은 그대로, 가운데 기준)"""
+        if self.style != 'drawing' or self.prof is None:
+            return
+        ax = self.ax
+        y0, y1 = ax.get_ylim()
+        x0, x1 = ax.get_xlim()
+        wpx, hpx = self._axes_px()
+        W = (y1 - y0) * wpx / hpx
+        c = (x0 + x1) / 2.0
+        ax.set_xlim(c - W / 2.0, c + W / 2.0)
+        self.draw_idle()
 
     def _on_scroll(self, ev):
         """휠 확대/축소(마우스 위치 기준) — CAD 처럼"""
