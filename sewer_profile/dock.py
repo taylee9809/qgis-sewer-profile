@@ -192,9 +192,10 @@ class ProfileDock(QDockWidget):
         opt2 = QHBoxLayout()
         opt2.addWidget(QLabel('관 색'))
         self.cb_color = QComboBox()
-        self.cb_color.addItem('구분(자연유하/압송)', 'kind')
-        self.cb_color.addItem('금회 판정', 'judge')
-        self.cb_color.addItem('우림 판정', 'judge_w')
+        self.cb_color.addItem('수리계산 결과', 'judge')
+        self.cb_color.addItem('자연유하 · 압송', 'kind')
+        self.cb_color.setToolTip('수리계산 결과 = 금회_수리판정 값별 색 / 자연유하·압송 = 구분별 색.\n'
+                                 '고른 쪽 범례가 종단 그림에 들어간다.')
         opt2.addWidget(self.cb_color)
         self.chk_lab = QCheckBox('라벨')
         self.chk_lab.setChecked(True)
