@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
 from qgis.PyQt.QtCore import Qt, QSettings
-from qgis.PyQt.QtGui import QColor, QFont, QBrush, QGuiApplication, QKeySequence
+from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
+                             QIcon, QPixmap, QPainter)
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
                                  QTreeWidgetItem, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
                                  QAbstractItemView, QMessageBox, QHeaderView, QShortcut,
@@ -22,6 +23,19 @@ PUMP_C = QColor('#c2185b')          # 압송 포함 구간
 BR_C = QColor('#6b7280')            # 지류(분기) — 본선은 기본색
 GRP_BG = QColor('#e8eaf0')
 FIND_BG = QColor('#ffe9a8')         # 찾기에 걸린 구간
+CUR_C = QColor(224, 27, 36)         # 종단 커서(빨간 점)와 같은 색
+
+
+def _dot_icon(color=CUR_C, px=10):
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    pa = QPainter(pm)
+    pa.setRenderHint(QPainter.Antialiasing)
+    pa.setPen(Qt.NoPen)
+    pa.setBrush(color)
+    pa.drawEllipse(1, 1, px - 2, px - 2)
+    pa.end()
+    return QIcon(pm)
 
 
 class ProfileDock(QDockWidget):
@@ -98,7 +112,7 @@ class ProfileDock(QDockWidget):
         hd.setStretchLastSection(False)
         hd.setSectionResizeMode(0, QHeaderView.Stretch)
         hd.setSectionResizeMode(1, QHeaderView.Fixed)
-        self.tree.setColumnWidth(1, 64)
+        self.tree.setColumnWidth(1, 78)       # 연장 앞 빨간 점 자리
         self.tree.headerItem().setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
         # 선택 표시를 지도 선택색과 같은 노랑으로 (지도에서 고른 구간이 트리에서 바로 보이게)
         self.tree.setStyleSheet('QTreeWidget::item:selected{background:#ffd21e;}'
@@ -182,6 +196,9 @@ class ProfileDock(QDockWidget):
         self.pick_tool.deactivated.connect(lambda: self.bt_pick.setChecked(False))
         self._sel_layer = None
         self._focus_fid = None
+        self._dot = _dot_icon()
+        self._dot_run = None               # 커서가 있는 구간(트리 빨간 점)
+        self._item_map = {}
         self.tree.itemSelectionChanged.connect(self.on_select)
         self.tree.itemDoubleClicked.connect(self.zoom_to_item)
         self.chk_down.toggled.connect(self.on_select)
@@ -192,6 +209,7 @@ class ProfileDock(QDockWidget):
         self.cb_vex.currentIndexChanged.connect(self.redraw)
         self.pc.cursorMoved.connect(self.on_profile_cursor)
         self.pc.cursorLeft.connect(self.marker.hide)
+        self.pc.cursorLeft.connect(lambda: self.mark_cursor_run(None))
         self.canvas_map.xyCoordinates.connect(self.on_map_move)
         self.canvas_map.destinationCrsChanged.connect(self._update_xf)
 
@@ -305,6 +323,8 @@ class ProfileDock(QDockWidget):
                 add(g, rid, True, True)           # 방류 루트 = 본선 끝 → 굵게
             g.setExpanded(True)
         self.tree.blockSignals(False)
+        self._dot_run = None
+        self._item_map = self._items_by_run()
         self._apply_find()
         njun = sum(1 for n, v in net.inn.items() if len(v) >= 2)
         self.lb_info.setText('관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d' % (
@@ -537,12 +557,31 @@ class ProfileDock(QDockWidget):
         self.canvas_map.setExtent(r)
         self.canvas_map.refresh()
 
+    def mark_cursor_run(self, s):
+        """종단 커서가 지나는 구간을 트리에서 빨간 점으로 표시(연장 앞)"""
+        rid = None
+        if s is not None and self.prof is not None and self.net is not None:
+            i, _ = self.prof.invert_at(s)
+            rid = self.net.run_of.get(self.prof.pipes[i].fid)
+        if rid == self._dot_run:
+            return
+        old = self._item_map.get(self._dot_run)
+        if old is not None:
+            old.setIcon(1, QIcon())
+        it = self._item_map.get(rid)
+        if it is not None:
+            it.setIcon(1, self._dot)
+            if not it.isHidden():
+                self.tree.scrollToItem(it)
+        self._dot_run = rid
+
     def on_profile_cursor(self, s):
         if self.prof is None or self._xf_to_map is None:
             return
         x, y = self.prof.locate(s)
         self.marker.setCenter(self._xf_to_map.transform(QgsPointXY(x, y)))
         self.marker.show()
+        self.mark_cursor_run(s)
 
     def on_map_move(self, pt):
         if self.prof is None or self._xf_to_layer is None or not self.isVisible():
@@ -556,11 +595,13 @@ class ProfileDock(QDockWidget):
         if s is None or d > tol:
             self.marker.hide()
             self.pc.set_profile_cursor(None)
+            self.mark_cursor_run(None)
             return
         x, y = self.prof.locate(s)
         self.marker.setCenter(self._xf_to_map.transform(QgsPointXY(x, y)))
         self.marker.show()
         self.pc.set_profile_cursor(s)
+        self.mark_cursor_run(s)
 
     # -------------------------------------------------------------- cleanup
     def cleanup(self):
