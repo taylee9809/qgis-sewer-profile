@@ -38,11 +38,15 @@ class ProfileCanvas(FigureCanvas):
         self.prof = None
         self.color_mode = 'kind'
         self.show_labels = True
+        self.style = 'simple'      # 'simple' | 'drawing'
+        self.vex = 5.0
+        self._Y = None
         self._vline = None
         self._dot = None
         self._txt = None
         self.mpl_connect('motion_notify_event', self._on_move)
         self.mpl_connect('axes_leave_event', lambda e: self.cursorLeft.emit())
+        self.mpl_connect('scroll_event', self._on_scroll)
         self._empty()
 
     def _empty(self):
@@ -58,8 +62,22 @@ class ProfileCanvas(FigureCanvas):
         self.prof = prof
         ax = self.ax
         ax.clear()
+        ax.set_aspect('auto')
+        ax.axis('on')
+        self._Y = None
         if prof is None or not prof.pipes:
             self._empty()
+            return
+        if self.style == 'drawing':
+            from .drawing_style import draw_sheet
+            info = draw_sheet(ax, prof, vex=self.vex, labels=self.show_labels, title=title)
+            self._Y = info['Y']
+            self._fit_height(info['ytop'])
+            self._vline = ax.axvline(0, color='#e01b24', lw=1.2, visible=False, zorder=9)
+            self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5, zorder=10)
+            self._txt = ax.text(0.005, 0.99, '', transform=ax.transAxes, fontsize=7.5, va='top', ha='left', zorder=11,
+                                bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.92), visible=False)
+            self.draw_idle()
             return
         # 지반선
         if getattr(prof, 'dem', None):
@@ -148,6 +166,29 @@ class ProfileCanvas(FigureCanvas):
                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.9), visible=False)
         self.draw_idle()
 
+    def _fit_height(self, ytop):
+        """도면식: 높이 전체가 보이게, 가로는 패널 비율만큼(가로세로 1:1 유지)"""
+        ax = self.ax
+        y0, y1 = -12.0, ytop + 10.0
+        bb = ax.get_position()
+        wpx = max(self.width() * bb.width, 50)
+        hpx = max(self.height() * bb.height, 50)
+        W = (y1 - y0) * wpx / hpx
+        x0 = -35.0
+        ax.set_ylim(y0, y1)
+        ax.set_xlim(x0, x0 + max(W, 60.0))
+
+    def _on_scroll(self, ev):
+        """휠 확대/축소(마우스 위치 기준) — CAD 처럼"""
+        if ev.inaxes is not self.ax or ev.xdata is None:
+            return
+        f = 0.8 if ev.button == 'up' else 1.25
+        x0, x1 = self.ax.get_xlim()
+        y0, y1 = self.ax.get_ylim()
+        self.ax.set_xlim(ev.xdata - (ev.xdata - x0) * f, ev.xdata + (x1 - ev.xdata) * f)
+        self.ax.set_ylim(ev.ydata - (ev.ydata - y0) * f, ev.ydata + (y1 - ev.ydata) * f)
+        self.draw_idle()
+
     # ---------------------------------------------------------------- cursor
     def set_cursor(self, s):
         if self.prof is None or self._vline is None:
@@ -177,6 +218,16 @@ class ProfileCanvas(FigureCanvas):
             lines.append('유속 %.3f m/s %s' % (p.vel, p.judge or ''))
         self._vline.set_xdata([s, s])
         self._vline.set_visible(True)
+        if self._Y is not None:
+            self._dot.set_data([s], [self._Y(il, s)] if il is not None else [])
+            x0, x1 = self.ax.get_xlim()
+            if not (x0 <= s <= x1):            # 화면 밖이면 종단을 따라 이동
+                w = x1 - x0
+                self.ax.set_xlim(s - w / 2, s + w / 2)
+            self._txt.set_text('\n'.join(lines))
+            self._txt.set_visible(True)
+            self.draw_idle()
+            return
         self._dot.set_data([s], [il] if il is not None else [])
         y0, y1 = self.ax.get_ylim()
         x0, x1 = self.ax.get_xlim()

@@ -88,6 +88,18 @@ class ProfileDock(QDockWidget):
         self.chk_lab.setChecked(True)
         opt2.addWidget(self.chk_lab)
         ll.addLayout(opt2)
+        opt3 = QHBoxLayout()
+        opt3.addWidget(QLabel('표시'))
+        self.cb_style = QComboBox()
+        self.cb_style.addItem('도면식(우림 종단면도)', 'drawing')
+        self.cb_style.addItem('간단', 'simple')
+        opt3.addWidget(self.cb_style)
+        opt3.addWidget(QLabel('V'))
+        self.cb_vex = QComboBox()
+        for lab, v in (('1:200 (×5)', 5.0), ('1:100 (×10)', 10.0), ('1:500 (×2)', 2.0), ('1:1000 (×1)', 1.0)):
+            self.cb_vex.addItem(lab, v)
+        opt3.addWidget(self.cb_vex)
+        ll.addLayout(opt3)
         self.lb_info = QLabel('')
         self.lb_info.setWordWrap(True)
         ll.addWidget(self.lb_info)
@@ -128,6 +140,8 @@ class ProfileDock(QDockWidget):
         self.chk_up.toggled.connect(self.on_select)
         self.cb_color.currentIndexChanged.connect(self.redraw)
         self.chk_lab.toggled.connect(self.redraw)
+        self.cb_style.currentIndexChanged.connect(self.redraw)
+        self.cb_vex.currentIndexChanged.connect(self.redraw)
         self.pc.cursorMoved.connect(self.on_profile_cursor)
         self.pc.cursorLeft.connect(self.marker.hide)
         self.canvas_map.xyCoordinates.connect(self.on_map_move)
@@ -245,6 +259,10 @@ class ProfileDock(QDockWidget):
     def redraw(self):
         self.pc.color_mode = self.cb_color.currentData()
         self.pc.show_labels = self.chk_lab.isChecked()
+        self.pc.style = self.cb_style.currentData()
+        self.pc.vex = self.cb_vex.currentData()
+        self.cb_vex.setEnabled(self.pc.style == 'drawing')
+        self.cb_color.setEnabled(self.pc.style == 'simple')
         if self.prof is not None:
             self.pc.plot(self.prof, getattr(self, 'title', ''))
 
