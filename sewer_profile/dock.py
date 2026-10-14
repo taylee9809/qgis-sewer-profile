@@ -9,7 +9,7 @@ from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                                  QApplication)
 from qgis.core import (QgsProject, QgsMapLayerProxyModel, QgsCoordinateTransform, QgsPointXY, QgsGeometry,
                        QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer)
-from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsMapToolEmitPoint
+from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
@@ -80,11 +80,6 @@ class ProfileDock(QDockWidget):
         self.bt_big.setCheckable(True)
         self.bt_big.setToolTip('종단도 패널을 화면 가득 띄운다. 다시 누르거나 Esc 로 원래 자리.')
         row.addWidget(self.bt_big)
-        self.bt_pick = QPushButton('지도에서 고르기')
-        self.bt_pick.setCheckable(True)
-        self.bt_pick.setToolTip('켠 뒤 지도에서 관로를 클릭하면 그 관이 속한 구간이 트리에서 선택되고 종단이 그려진다.\n'
-                                '(QGIS 선택 도구로 노선을 선택해도 똑같이 동작)')
-        row.addWidget(self.bt_pick)
         lay.addLayout(row)
 
         # --- 본문: 트리 | 종단
@@ -121,12 +116,19 @@ class ProfileDock(QDockWidget):
         self.mono.setStyleHint(QFont.Monospace)
         ll.addWidget(self.tree)
         opt = QHBoxLayout()
-        self.chk_down = QCheckBox('방류까지')
-        self.chk_down.setToolTip('선택한 구간부터 하류 방류점까지 이어서 그린다')
-        self.chk_up = QCheckBox('상류 본선')
+        opt.setSpacing(0)
+        self.chk_up = QPushButton('상류 본선')
+        self.chk_up.setCheckable(True)
         self.chk_up.setToolTip('선택한 구간의 상류 본선(가장 긴 상류)까지 이어서 그린다')
-        opt.addWidget(self.chk_down)
-        opt.addWidget(self.chk_up)
+        self.chk_down = QPushButton('방류까지')
+        self.chk_down.setCheckable(True)
+        self.chk_down.setToolTip('선택한 구간부터 하류 방류점까지 이어서 그린다')
+        arrow = QLabel('───────▶')
+        arrow.setAlignment(Qt.AlignCenter)
+        arrow.setStyleSheet('color:#8a8f98;')
+        arrow.setToolTip('유향 — 상류에서 방류 쪽')
+        for wg in (self.chk_up, arrow, self.chk_down):
+            opt.addWidget(wg, 1 if wg is arrow else 0)
         ll.addLayout(opt)
         opt2 = QHBoxLayout()
         opt2.addWidget(QLabel('관 색'))
@@ -142,7 +144,7 @@ class ProfileDock(QDockWidget):
         opt3 = QHBoxLayout()
         opt3.addWidget(QLabel('표시'))
         self.cb_style = QComboBox()
-        self.cb_style.addItem('도면식(우림 종단면도)', 'drawing')
+        self.cb_style.addItem('종단면도 성과품', 'drawing')
         self.cb_style.addItem('간단', 'simple')
         opt3.addWidget(self.cb_style)
         opt3.addWidget(QLabel('V'))
@@ -187,13 +189,10 @@ class ProfileDock(QDockWidget):
         self.bt_build.clicked.connect(self.build_tree)
         self.ed_find.textChanged.connect(self._apply_find)
         self.bt_big.toggled.connect(self._big_toggled)
+
         self._esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._esc.setContext(Qt.WidgetWithChildrenShortcut)
         self._esc.activated.connect(lambda: self.bt_big.setChecked(False))
-        self.bt_pick.toggled.connect(self._pick_toggled)
-        self.pick_tool = QgsMapToolEmitPoint(self.canvas_map)
-        self.pick_tool.canvasClicked.connect(self._picked)
-        self.pick_tool.deactivated.connect(lambda: self.bt_pick.setChecked(False))
         self._sel_layer = None
         self._focus_fid = None
         self._dot = _dot_icon()
@@ -495,39 +494,6 @@ class ProfileDock(QDockWidget):
                 self.setGeometry(self._prev_geom)
         self.pc.refit_width()
 
-    def _pick_toggled(self, on):
-        if on:
-            self._prev_tool = self.canvas_map.mapTool()
-            self.canvas_map.setMapTool(self.pick_tool)
-        elif self.canvas_map.mapTool() is self.pick_tool:
-            prev = getattr(self, '_prev_tool', None)
-            if prev is not None:
-                self.canvas_map.setMapTool(prev)
-            else:
-                self.canvas_map.unsetMapTool(self.pick_tool)
-
-    def _picked(self, pt, button):
-        if self.net is None or self._xf_to_layer is None:
-            return
-        q = self._xf_to_layer.transform(pt)
-        tol = 12 * self.canvas_map.mapUnitsPerPixel()
-        best = None
-        for fid, p in self.net.pipes.items():
-            xs = [a for a, _ in p.pts]
-            ys = [b for _, b in p.pts]
-            if not (min(xs) - tol <= q.x() <= max(xs) + tol and min(ys) - tol <= q.y() <= max(ys) + tol):
-                continue
-            for (ax_, ay), (bx, by) in zip(p.pts, p.pts[1:]):
-                dx, dy = bx - ax_, by - ay
-                L2 = dx * dx + dy * dy
-                t = 0 if L2 == 0 else max(0.0, min(1.0, ((q.x() - ax_) * dx + (q.y() - ay) * dy) / L2))
-                d = ((q.x() - ax_ - dx * t) ** 2 + (q.y() - ay - dy * t) ** 2) ** 0.5
-                if d <= tol and (best is None or d < best[0]):
-                    best = (d, fid)
-        if best is None:
-            return
-        self.layer.selectByIds([best[1]])      # → _map_selection 이 트리·종단 갱신
-
     # ------------------------------------------------------------- map link
     def _update_xf(self):
         if self.layer is None:
@@ -610,8 +576,6 @@ class ProfileDock(QDockWidget):
                 self._sel_layer.selectionChanged.disconnect(self._map_selection)
             except Exception:
                 pass
-        if self.canvas_map.mapTool() is self.pick_tool:
-            self.canvas_map.unsetMapTool(self.pick_tool)
         try:
             self.canvas_map.xyCoordinates.disconnect(self.on_map_move)
         except Exception:
