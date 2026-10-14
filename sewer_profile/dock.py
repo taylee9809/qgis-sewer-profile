@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
-from qgis.PyQt.QtCore import Qt, QSettings
+from qgis.PyQt.QtCore import Qt, QSettings, QPointF
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
-                             QIcon, QPixmap, QPainter)
+                             QIcon, QPixmap, QPainter, QPen, QPolygonF)
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
                                  QTreeWidgetItem, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
                                  QAbstractItemView, QMessageBox, QHeaderView, QShortcut,
@@ -36,6 +36,36 @@ def _dot_icon(color=CUR_C, px=10):
     pa.drawEllipse(1, 1, px - 2, px - 2)
     pa.end()
     return QIcon(pm)
+
+
+class FlowArrow(QWidget):
+    """[상류] ──▸── [방류] 사이의 유향 표시"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumWidth(36)
+        self.setFixedHeight(18)
+        self.setToolTip('유향 — 상류에서 방류 쪽')
+
+    def paintEvent(self, ev):
+        pa = QPainter(self)
+        pa.setRenderHint(QPainter.Antialiasing)
+        col = QColor('#98a1ab')
+        y = self.height() / 2.0
+        pa.setPen(QPen(col, 1.0))
+        pa.drawLine(QPointF(2, y), QPointF(self.width() - 2, y))
+        cx = self.width() / 2.0
+        pa.setPen(Qt.NoPen)
+        pa.setBrush(col)
+        pa.drawPolygon(QPolygonF([QPointF(cx - 3.0, y - 3.6),
+                                  QPointF(cx + 4.0, y),
+                                  QPointF(cx - 3.0, y + 3.6)]))
+        pa.end()
+
+
+class ProfileToolbar(NavigationToolbar2QT):
+    """쓰는 것만 — 이동·확대·캡처"""
+    toolitems = [t for t in NavigationToolbar2QT.toolitems if t[0] in ('Pan', 'Zoom', 'Save')]
 
 
 class ProfileDock(QDockWidget):
@@ -117,16 +147,13 @@ class ProfileDock(QDockWidget):
         ll.addWidget(self.tree)
         opt = QHBoxLayout()
         opt.setSpacing(0)
-        self.chk_up = QPushButton('상류 본선')
+        self.chk_up = QPushButton('상류')
         self.chk_up.setCheckable(True)
         self.chk_up.setToolTip('선택한 구간의 상류 본선(가장 긴 상류)까지 이어서 그린다')
-        self.chk_down = QPushButton('방류까지')
+        self.chk_down = QPushButton('방류')
         self.chk_down.setCheckable(True)
         self.chk_down.setToolTip('선택한 구간부터 하류 방류점까지 이어서 그린다')
-        arrow = QLabel('───────▶')
-        arrow.setAlignment(Qt.AlignCenter)
-        arrow.setStyleSheet('color:#8a8f98;')
-        arrow.setToolTip('유향 — 상류에서 방류 쪽')
+        arrow = FlowArrow()
         for wg in (self.chk_up, arrow, self.chk_down):
             opt.addWidget(wg, 1 if wg is arrow else 0)
         ll.addLayout(opt)
@@ -162,7 +189,16 @@ class ProfileDock(QDockWidget):
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         self.pc = ProfileCanvas(right)
-        self.tb = NavigationToolbar2QT(self.pc, right)
+        self.tb = ProfileToolbar(self.pc, right)
+        for a in self.tb.actions():
+            t = a.text() or ''
+            if t.startswith('Pan'):
+                a.setToolTip('이동 — 드래그로 화면 옮기기 (끄면 커서 추적 재개)')
+            elif t.startswith('Zoom'):
+                a.setToolTip('확대 — 영역을 드래그 (휠로도 확대·축소)')
+            elif t.startswith('Save'):
+                a.setText('캡처')
+                a.setToolTip('캡처 — 지금 화면을 그림 파일로 저장')
         self.pc.toolbar = self.tb
         rl.addWidget(self.tb)
         rl.addWidget(self.pc)
