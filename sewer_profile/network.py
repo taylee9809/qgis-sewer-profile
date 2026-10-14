@@ -26,6 +26,7 @@ MH_FIELDS = {
     'name': ['맨홀번호', 'name'],
     'gl': ['지반고', 'gl'],
     'kind': ['구분'],
+    'type': ['맨홀호수', '맨홀규격'],
 }
 
 SNAP = 0.05   # 끝점 동일 판정(m)
@@ -287,6 +288,7 @@ class Profile(object):
                     if mh.get('gl') is not None and (n['gl'] is None or n is self.nodes[-1]):
                         n['gl'] = mh['gl']
                     n['mh'] = True
+                    n['mh_kind'] = str(mh.get('type') or mh.get('kind') or '')
                 else:
                     n['mh'] = n is not self.nodes[-1] and not (self._is_sub(n['name']))
         else:
@@ -371,7 +373,8 @@ class Manholes(object):
             c = g.centroid().asPoint()
             self.items.append(dict(xy=(c.x(), c.y()), name=str(f[F['name']]) if F['name'] and f[F['name']] else '',
                                    gl=_num(f[F['gl']]) if F['gl'] else None,
-                                   kind=f[F['kind']] if F['kind'] else None))
+                                   kind=f[F['kind']] if F['kind'] else None,
+                                   type=f[F['type']] if F['type'] else None))
         self.cell = {}
         for k, it in enumerate(self.items):
             self.cell.setdefault((int(it['xy'][0] // 10), int(it['xy'][1] // 10)), []).append(k)
