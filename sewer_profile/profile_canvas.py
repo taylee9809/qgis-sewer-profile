@@ -21,8 +21,12 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 # 간단식 색 — 흰 바탕에 가라앉은 톤, 색은 관에만 주고 글자는 먹색으로
 JUDGE_COLOR = {'GOOD': '#3f8f5f', 'LESS0.6': '#c6882c', '유량없음': '#9aa3ad',
                '만관초과': '#bf4a44', 'UPPR3.0': '#7a6bb0', '역경사/0': '#bf4a44'}
-GROUND = '#8d7f6e'          # 지반선
-EARTH = '#f7f3ec'           # 지반 아래
+JUDGE_LABEL = {'GOOD': 'GOOD (기준 만족)', 'LESS0.6': 'LESS0.6 (유속<0.6)',
+               'UPPR3.0': 'UPPR3.0 (유속>3.0)'}
+JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유량없음', '미판정', '압송']
+NOJUDGE = '#4b5563'         # 판정값 없음 — 지반(회색)과 구분되게 진하게
+GROUND = '#878d96'          # 지반선 — 중립 회색(색은 관에만 주려고)
+EARTH = '#f3f4f6'           # 지반 아래
 PIPE = '#4a7ba7'            # 자연유하
 PRESS = '#b5616b'           # 압송
 MH = '#2b2b2b'              # 맨홀·지장물 세로선(얇은 검정 점선)
@@ -108,17 +112,21 @@ class ProfileCanvas(FigureCanvas):
             gline = (gx, gy)
         # 관
         ymin, ymax = [], []
+        used = {}                                   # 범례 — 실제로 쓰인 색만
         for i, p in enumerate(prof.pipes):
             x0, x1 = prof.seg[i]
             if p.il_up is None or p.il_dn is None:
                 continue
             press = '압송' in (p.kind or '')
-            if self.color_mode == 'judge':
-                c = PRESS if press else JUDGE_COLOR.get(str(p.judge), '#444')
-            elif self.color_mode == 'judge_w':
-                c = PRESS if press else JUDGE_COLOR.get(str(p.judge_w), '#444')
+            if self.color_mode == 'judge' and not press:
+                j = str(p.judge)
+                c = JUDGE_COLOR.get(j, NOJUDGE)
+                key = j if j in JUDGE_COLOR else '미판정'
+            elif press:
+                c, key = PRESS, '압송'
             else:
-                c = PRESS if press else PIPE
+                c, key = PIPE, '자연유하'
+            used.setdefault(key, c)
             ax.fill_between([x0, x1], [p.il_up, p.il_dn], [p.il_up + p.d, p.il_dn + p.d],
                             color=c, alpha=0.85, lw=0, zorder=4)
             ax.plot([x0, x1], [p.il_up, p.il_dn], color=c, lw=1.1, zorder=5,
@@ -185,6 +193,18 @@ class ProfileCanvas(FigureCanvas):
             ax.spines[sp].set_color(AXIS)
             ax.spines[sp].set_linewidth(0.8)
         ax.set_title(title, fontsize=10.5, color=INK)
+        if used:
+            from matplotlib.patches import Patch
+            keys = sorted(used, key=lambda k: JUDGE_ORDER.index(k) if k in JUDGE_ORDER else 99)
+            hs = [Patch(facecolor=used[k], edgecolor='none', label=JUDGE_LABEL.get(k, k))
+                  for k in keys]
+            leg = ax.legend(handles=hs, loc='upper right', fontsize=7.5, frameon=True,
+                            framealpha=0.95, edgecolor=AXIS, facecolor='white',
+                            borderpad=0.5, labelspacing=0.35, handlelength=1.1,
+                            handleheight=0.9, borderaxespad=0.4)
+            leg.get_frame().set_linewidth(0.8)
+            for t in leg.get_texts():
+                t.set_color(INK)
         self._vline = ax.axvline(0, color='#e01b24', lw=1.0, visible=False)
         self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5)
         self._txt = ax.text(0, 0, '', fontsize=7, va='top', ha='left',
