@@ -94,6 +94,21 @@ def parse_obstacles(text):
     return out
 
 
+def short_range(a, b):
+    """관번호 두 개를 공통 접두로 묶는다.
+    MS-A-018, MS-A-028 → MS-A-018~028 / ODS-101-001, ODS-101-00505 → ODS-101-001~00505
+    MS-A2-001, MS-A-028 → MS-A2-001~A-028 / 접두가 다르면 'a ~ b'"""
+    if a == b:
+        return a
+    ta, tb = a.split('-'), b.split('-')
+    k = 0
+    while k < min(len(ta), len(tb)) - 1 and ta[k] == tb[k]:
+        k += 1
+    if k == 0:
+        return '%s ~ %s' % (a, b)
+    return '%s~%s' % (a, '-'.join(tb[k:]))
+
+
 class Pipe(object):
     __slots__ = ('fid', 'name', 'pts', 'length', 'il_up', 'il_dn', 'd', 'gl_up', 'kind', 'obs',
                  'judge', 'judge_w', 'zone', 'slope', 'flow', 'vel', 'a', 'b')
@@ -220,6 +235,10 @@ class Network(object):
         a = self.pipes[r['pipes'][0]].name
         b = self.pipes[r['pipes'][-1]].name
         return a if a == b else '%s → %s' % (a, b)
+
+    def run_short(self, r):
+        """'MS-A-018' ~ 'MS-A-028' → 'MS-A-018~028' (공통 접두 토큰은 한 번만)"""
+        return short_range(self.pipes[r['pipes'][0]].name, self.pipes[r['pipes'][-1]].name)
 
     def downstream_chain(self, rid):
         """rid 부터 방류까지 구간 id 목록"""

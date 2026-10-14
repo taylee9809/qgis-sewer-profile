@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
 from qgis.PyQt.QtCore import Qt, QSettings
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtGui import QColor, QFont, QBrush
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
                                  QTreeWidgetItem, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
-                                 QAbstractItemView, QMessageBox)
+                                 QAbstractItemView, QMessageBox, QHeaderView)
 from qgis.core import (QgsProject, QgsMapLayerProxyModel, QgsCoordinateTransform, QgsPointXY, QgsGeometry,
                        QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer)
 from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsMapToolEmitPoint
@@ -15,7 +15,12 @@ from .network import read_pipes, Network, Profile, Manholes
 from .profile_canvas import ProfileCanvas
 
 ROLE = Qt.UserRole + 1
+ROLE_TXT = Qt.UserRole + 2          # 찾기용 — 구간에 속한 관번호 전부
 KEY = 'sewer_profile/'
+PUMP_C = QColor('#c2185b')          # 압송 포함 구간
+BR_C = QColor('#6b7280')            # 지류(분기) — 본선은 기본색
+GRP_BG = QColor('#e8eaf0')
+FIND_BG = QColor('#ffe9a8')         # 찾기에 걸린 구간
 
 
 class ProfileDock(QDockWidget):
@@ -68,11 +73,30 @@ class ProfileDock(QDockWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        rowf = QHBoxLayout()
+        rowf.addWidget(QLabel('찾기'))
+        self.ed_find = QLineEdit()
+        self.ed_find.setPlaceholderText('관번호·지구 일부 (예: MS-A-020, OHG-109, 마사)')
+        self.ed_find.setClearButtonEnabled(True)
+        self.ed_find.setToolTip('구간에 속한 관번호 전부를 뒤진다 — 중간 관번호로도 그 구간을 찾는다.')
+        rowf.addWidget(self.ed_find)
+        ll.addLayout(rowf)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['구간(분기점 기준)', '관', '연장 m'])
+        self.tree.setHeaderLabels(['구간', '연장 m'])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.tree.setColumnWidth(0, 230)
-        self.tree.setColumnWidth(1, 36)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setIndentation(10)
+        self.tree.setTextElideMode(Qt.ElideLeft)
+        self.tree.setExpandsOnDoubleClick(False)      # 더블클릭 = 지도 줌
+        hd = self.tree.header()
+        hd.setStretchLastSection(False)
+        hd.setSectionResizeMode(0, QHeaderView.Stretch)
+        hd.setSectionResizeMode(1, QHeaderView.Fixed)
+        self.tree.setColumnWidth(1, 64)
+        self.tree.headerItem().setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+        self.mono = QFont('Consolas')
+        self.mono.setStyleHint(QFont.Monospace)
         ll.addWidget(self.tree)
         opt = QHBoxLayout()
         self.chk_down = QCheckBox('방류까지')
@@ -121,7 +145,7 @@ class ProfileDock(QDockWidget):
         sp.addWidget(right)
         sp.setStretchFactor(0, 0)
         sp.setStretchFactor(1, 1)
-        sp.setSizes([330, 900])
+        sp.setSizes([400, 840])
         lay.addWidget(sp, 1)
         self.setWidget(w)
 
@@ -139,6 +163,7 @@ class ProfileDock(QDockWidget):
 
         # --- 시그널
         self.bt_build.clicked.connect(self.build_tree)
+        self.ed_find.textChanged.connect(self._apply_find)
         self.bt_pick.toggled.connect(self._pick_toggled)
         self.pick_tool = QgsMapToolEmitPoint(self.canvas_map)
         self.pick_tool.canvasClicked.connect(self._picked)
@@ -213,20 +238,38 @@ class ProfileDock(QDockWidget):
         self.tree.clear()
         net = self.net
 
-        def add(parent, rid):
+        def subtotal(rid):
+            return net.runs[rid]['length'] + sum(subtotal(c) for c in net.runs[rid]['children'])
+
+        def add(parent, rid, main, root=False):
             r = net.runs[rid]
-            it = QTreeWidgetItem([net.run_label(r), str(len(r['pipes'])), '%.1f' % r['length']])
+            fids = r['pipes']
+            pump = any('압송' in (net.pipes[i].kind or '') for i in fids)
+            it = QTreeWidgetItem([net.run_short(r) + ('  ⇡' if pump else ''),
+                                  format(r['length'], ',.1f')])
             it.setData(0, ROLE, rid)
-            p0 = net.pipes[r['pipes'][0]]
-            tip = '%s\n관 %d개 · 연장 %.1f m · 상류 총연장 %.1f m' % (net.run_label(r), len(r['pipes']), r['length'], r['up_length'])
-            if p0.zone:
-                tip += '\n지구: %s' % p0.zone
-            it.setToolTip(0, tip)
-            if any('압송' in (net.pipes[i].kind or '') for i in r['pipes']):
-                it.setForeground(0, QColor('#c2185b'))
+            it.setData(0, ROLE_TXT, ' '.join(net.pipes[i].name for i in fids).upper())
+            fo = QFont(self.mono)
+            fo.setBold(root)
+            it.setFont(0, fo)
+            it.setFont(1, QFont(self.mono))
+            it.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            tip = '%s\n관 %d개 · 연장 %.1f m · 본선 상류연장 %.1f m' % (
+                net.run_label(r), len(fids), r['length'], r['up_length'])
+            if pump:
+                tip += '\n압송 포함 (⇡)'
+            z0 = net.pipes[fids[0]].zone
+            if z0:
+                tip += '\n지구: %s' % z0
+            for c in (0, 1):
+                it.setToolTip(c, tip)
+                if pump:
+                    it.setForeground(c, PUMP_C)
+                elif not main:
+                    it.setForeground(c, BR_C)       # 지류는 흐리게 → 본선이 뜬다
             (parent.addChild(it) if isinstance(parent, QTreeWidgetItem) else parent.addTopLevelItem(it))
-            for c in r['children']:
-                add(it, c)
+            for k, ch in enumerate(r['children']):
+                add(it, ch, k == 0)               # 첫 자식 = 본선(상류연장 최대)
             return it
 
         # 지구별로 묶기
@@ -235,19 +278,47 @@ class ProfileDock(QDockWidget):
             z = net.pipes[r['pipes'][-1]].zone or '(지구없음)'
             groups.setdefault(z, []).append(r['id'])
         for z in sorted(groups):
-            g = QTreeWidgetItem(['%s  (방류 %d)' % (z, len(groups[z])), '', ''])
+            tot = sum(subtotal(rid) for rid in groups[z])
+            g = QTreeWidgetItem(['%s   방류 %d' % (z, len(groups[z])), format(tot, ',.0f')])
             g.setFlags(g.flags() & ~Qt.ItemIsSelectable)
-            f = g.font(0)
-            f.setBold(True)
-            g.setFont(0, f)
+            for c in (0, 1):
+                f = g.font(c)
+                f.setBold(True)
+                g.setFont(c, f)
+                g.setBackground(c, GRP_BG)
+            g.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
+            g.setToolTip(0, '%s · 방류 %d 개소 · 총연장 %.1f m' % (z, len(groups[z]), tot))
             self.tree.addTopLevelItem(g)
             for rid in groups[z]:
-                add(g, rid)
+                add(g, rid, True, True)           # 방류 루트 = 본선 끝 → 굵게
             g.setExpanded(True)
         self.tree.blockSignals(False)
+        self._apply_find()
         njun = sum(1 for n, v in net.inn.items() if len(v) >= 2)
         self.lb_info.setText('관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d' % (
             len(net.pipes), len(net.runs), njun, len(net.roots())))
+
+    def _apply_find(self, txt=None):
+        q = (txt if txt is not None else self.ed_find.text()).strip().upper()
+        for i in range(self.tree.topLevelItemCount()):
+            self._filter_item(self.tree.topLevelItem(i), q)
+
+    def _filter_item(self, it, q, forced=False):
+        run = it.data(0, ROLE) is not None
+        own = bool(q) and (q in (it.data(0, ROLE_TXT) or '') or q in it.text(0).upper())
+        hit = forced or (not q) or own
+        kid = False
+        for i in range(it.childCount()):
+            # 지구 이름이 걸리면 그 밑은 전부 보여준다
+            kid = self._filter_item(it.child(i), q, forced or (hit and not run)) or kid
+        it.setHidden(not (hit or kid))
+        if run:
+            br = QBrush(FIND_BG) if own else QBrush()
+            for c in (0, 1):
+                it.setBackground(c, br)
+        if q and kid:
+            it.setExpanded(True)
+        return hit or kid
 
     def selected_runs(self):
         return [it.data(0, ROLE) for it in self.tree.selectedItems() if it.data(0, ROLE) is not None]
@@ -349,6 +420,9 @@ class ProfileDock(QDockWidget):
 
     def select_runs(self, rids):
         items = self._items_by_run()
+        if self.ed_find.text().strip() and any(
+                items.get(r) is not None and items[r].isHidden() for r in rids):
+            self.ed_find.clear()
         self.tree.blockSignals(True)
         self.tree.clearSelection()
         last = None

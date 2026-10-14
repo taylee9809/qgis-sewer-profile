@@ -2,7 +2,7 @@
 name=Sewer Profile Viewer
 qgisMinimumVersion=3.22
 description=하수관로 노선을 분기점 기준 트리로 나누고, 선택한 노선의 종단도(지반고·관저고·맨홀·지장물)를 지도와 연동해 보여준다.
-version=0.3.0
+version=0.4.0
 author=taylee9809
 email=dhwsd2t1@gmail.com
 about=노선 레이어(관번호·상류/하류관저고·관경·상류지반고·종단지장물)를 읽어 분기점 기준 구간 트리를 만들고, 구간을 고르면 하단 패널에 종단도를 그린다. 지도에서 노선 위에 마우스를 올리면 빨간 점이 노선을 따라가고 종단도에 같은 측점이 표시된다(반대 방향도 동작).
