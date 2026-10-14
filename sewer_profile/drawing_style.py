@@ -433,7 +433,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
     if title:
         T.add(total / 2, ytop, title, h=5.0, ha='center', va='bottom')
     specs = T.flush(ax)
-    ax.set_aspect('equal', adjustable='box')
+    ax.set_aspect('auto')          # 1:1 은 캔버스가 xlim 으로 맞춘다(_fit_height)
     ax.set_xlim(-35, total + 10)
     ax.set_ylim(-12, ytop + 10)
     ax.axis('off')

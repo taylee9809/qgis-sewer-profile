@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
 from qgis.PyQt.QtCore import Qt, QSettings
-from qgis.PyQt.QtGui import QColor, QFont, QBrush
+from qgis.PyQt.QtGui import QColor, QFont, QBrush, QGuiApplication, QKeySequence
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
                                  QTreeWidgetItem, QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox,
-                                 QAbstractItemView, QMessageBox, QHeaderView)
+                                 QAbstractItemView, QMessageBox, QHeaderView, QShortcut,
+                                 QApplication)
 from qgis.core import (QgsProject, QgsMapLayerProxyModel, QgsCoordinateTransform, QgsPointXY, QgsGeometry,
                        QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer)
 from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsMapToolEmitPoint
@@ -61,6 +62,10 @@ class ProfileDock(QDockWidget):
         row.addWidget(self.ed_expr, 3)
         self.bt_build = QPushButton('트리 새로고침')
         row.addWidget(self.bt_build)
+        self.bt_big = QPushButton('크게 보기')
+        self.bt_big.setCheckable(True)
+        self.bt_big.setToolTip('종단도 패널을 화면 가득 띄운다. 다시 누르거나 Esc 로 원래 자리.')
+        row.addWidget(self.bt_big)
         self.bt_pick = QPushButton('지도에서 고르기')
         self.bt_pick.setCheckable(True)
         self.bt_pick.setToolTip('켠 뒤 지도에서 관로를 클릭하면 그 관이 속한 구간이 트리에서 선택되고 종단이 그려진다.\n'
@@ -167,6 +172,10 @@ class ProfileDock(QDockWidget):
         # --- 시그널
         self.bt_build.clicked.connect(self.build_tree)
         self.ed_find.textChanged.connect(self._apply_find)
+        self.bt_big.toggled.connect(self._big_toggled)
+        self._esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        self._esc.setContext(Qt.WidgetWithChildrenShortcut)
+        self._esc.activated.connect(lambda: self.bt_big.setChecked(False))
         self.bt_pick.toggled.connect(self._pick_toggled)
         self.pick_tool = QgsMapToolEmitPoint(self.canvas_map)
         self.pick_tool.canvasClicked.connect(self._picked)
@@ -443,6 +452,28 @@ class ProfileDock(QDockWidget):
         if last is not None:
             self.tree.scrollToItem(last)
             self.on_select()
+
+    def _big_toggled(self, on):
+        """패널을 띄워 화면 가득 — 종단을 크게 본다"""
+        if on:
+            self._prev_float = self.isFloating()
+            self._prev_geom = self.geometry()
+            if not self.isFloating():
+                self.setFloating(True)
+            scr = None
+            try:
+                scr = QGuiApplication.screenAt(self.mapToGlobal(self.rect().center()))
+            except Exception:
+                pass
+            self.setGeometry((scr or QApplication.primaryScreen()).availableGeometry())
+            self.raise_()
+            self.activateWindow()
+        else:
+            if not getattr(self, '_prev_float', False):
+                self.setFloating(False)
+            elif getattr(self, '_prev_geom', None) is not None:
+                self.setGeometry(self._prev_geom)
+        self.pc.refit_width()
 
     def _pick_toggled(self, on):
         if on:
