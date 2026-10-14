@@ -86,15 +86,18 @@ class ProfileCanvas(FigureCanvas):
             self.draw_idle()
             return
         # 지반선
+        gline = None
         if getattr(prof, 'dem', None):
             xs, ys = zip(*prof.dem)
-            ax.plot(xs, ys, color=GROUND, lw=1.2, label='지반선(DEM)')
+            ax.plot(xs, ys, color=GROUND, lw=1.8, zorder=3, label='지반선(DEM)')
+            gline = (xs, ys)
             if prof.ground:
                 gx, gy = zip(*prof.ground)
-                ax.plot(gx, gy, 'o', color=GROUND, ms=2.5)
+                ax.plot(gx, gy, 'o', color=GROUND, ms=3.5, zorder=3)
         elif prof.ground:
             gx, gy = zip(*prof.ground)
-            ax.plot(gx, gy, color=GROUND, lw=1.4, label='지반선(맨홀 지반고)')
+            ax.plot(gx, gy, color=GROUND, lw=2.0, zorder=3, label='지반선(맨홀 지반고)')
+            gline = (gx, gy)
         # 관
         ymin, ymax = [], []
         for i, p in enumerate(prof.pipes):
@@ -108,9 +111,12 @@ class ProfileCanvas(FigureCanvas):
                 c = PRESS if press else JUDGE_COLOR.get(str(p.judge_w), '#444')
             else:
                 c = PRESS if press else PIPE
-            ax.plot([x0, x1], [p.il_up, p.il_dn], color=c, lw=1.6)
-            ax.plot([x0, x1], [p.il_up + p.d, p.il_dn + p.d], color=c, lw=0.7)
-            ax.fill_between([x0, x1], [p.il_up, p.il_dn], [p.il_up + p.d, p.il_dn + p.d], color=c, alpha=0.18, lw=0)
+            ax.plot([x0, x1], [p.il_up, p.il_dn], color=c, lw=2.4, zorder=5,
+                    solid_capstyle='butt')
+            ax.plot([x0, x1], [p.il_up + p.d, p.il_dn + p.d], color=c, lw=1.1, zorder=5,
+                    solid_capstyle='butt')
+            ax.fill_between([x0, x1], [p.il_up, p.il_dn], [p.il_up + p.d, p.il_dn + p.d],
+                            color=c, alpha=0.30, lw=0, zorder=4)
             ymin += [p.il_up, p.il_dn]
             ymax += [p.il_up + p.d, p.il_dn + p.d]
             # 지장물
@@ -128,16 +134,16 @@ class ProfileCanvas(FigureCanvas):
                     bot = o['el'] + 0.30          # flo 저면EL = 관저 − 0.30 규약
                     top = bot + d
                     mk = 'o'
-                ax.plot([xo, xo], [bot, top], color=OBS, lw=2.2, solid_capstyle='butt')
-                ax.plot([xo], [(bot + top) / 2], marker=mk, mfc='white', mec=OBS, ms=7, mew=1.2)
+                ax.plot([xo, xo], [bot, top], color=OBS, lw=2.4, solid_capstyle='butt', zorder=6)
+                ax.plot([xo], [(bot + top) / 2], marker=mk, mfc='white', mec=OBS, ms=8, mew=1.3, zorder=6)
                 ymin.append(o['el'])
                 ymax.append(top)
                 ax.plot([xo], [o['el']], marker='^', color=OBS, ms=3)
                 if self.show_labels:
                     # 맨홀 번호(위)와 겹치지 않게 지장물 라벨은 아래로
                     lab = '%s%s\n저면 %.2f' % (o['kind'], (' D' + o['spec']) if o['spec'] else '', o['el'])
-                    ax.annotate(lab, (xo, o['el']), xytext=(0, -6), textcoords='offset points',
-                                ha='center', va='top', fontsize=6, color=OBS)
+                    ax.annotate(lab, (xo, o['el']), xytext=(0, -7), textcoords='offset points',
+                                ha='center', va='top', fontsize=6.8, color=OBS, zorder=7)
         # 맨홀
         for n in prof.nodes:
             if n['gl'] is not None:
@@ -147,25 +153,34 @@ class ProfileCanvas(FigureCanvas):
             ils = [v for v in (n['il_in'], n['il_out']) if v is not None]
             bot = min(ils) if ils else None
             top = n['gl']
+            ax.axvline(n['x'], color='#c9ced6', lw=0.6, zorder=1)      # 맨홀 위치 안내선
             if bot is not None and top is not None:
-                ax.plot([n['x'], n['x']], [bot, top], color='#333', lw=0.8)
+                ax.plot([n['x'], n['x']], [bot, top], color='#333', lw=1.4, zorder=6,
+                        solid_capstyle='butt')
                 if n['il_in'] is not None and n['il_out'] is not None and n['il_in'] - n['il_out'] > 0.05:
                     ax.plot([n['x']], [n['il_in']], marker='_', color='#d62728', ms=8)
             if self.show_labels and n['name'] and top is not None:
-                ax.annotate(n['name'], (n['x'], top), xytext=(0, 3), textcoords='offset points',
-                            rotation=90, ha='center', va='bottom', fontsize=6.5, color='#222')
+                ax.annotate(n['name'], (n['x'], top), xytext=(0, 4), textcoords='offset points',
+                            rotation=90, ha='center', va='bottom', fontsize=7.5, color='#111', zorder=7)
         if prof.ground:
             ymin += [g for _, g in prof.ground]
         lo = min(ymin) if ymin else 0
         hi = max(ymax) if ymax else 1
         pad = max((hi - lo) * 0.12, 0.5)
-        ax.set_ylim(lo - pad * 2.0, hi + pad * 2.2)
+        ax.set_ylim(lo - pad * 1.2, hi + pad * 2.6)      # 아래는 지장물 라벨, 위는 맨홀 라벨 자리
         ax.set_xlim(-prof.total * 0.01, prof.total * 1.01)
-        ax.set_xlabel('누가거리 (m)', fontsize=8)
-        ax.set_ylabel('EL (m)', fontsize=8)
-        ax.tick_params(labelsize=7)
-        ax.grid(True, lw=0.3, alpha=0.5)
-        ax.set_title(title, fontsize=9)
+        if gline:                                        # 지반 아래를 흙색으로 — 종단면처럼
+            ax.fill_between(gline[0], gline[1], ax.get_ylim()[0], color='#f6efe4', lw=0, zorder=0)
+        ax.set_xlabel('누가거리 (m)', fontsize=9)
+        ax.set_ylabel('EL (m)', fontsize=9)
+        ax.tick_params(labelsize=8)
+        ax.set_axisbelow(True)
+        ax.grid(True, lw=0.4, alpha=0.45)
+        ax.grid(True, which='minor', lw=0.25, alpha=0.3)
+        ax.minorticks_on()
+        for sp in ('top', 'right'):
+            ax.spines[sp].set_visible(False)
+        ax.set_title(title, fontsize=10.5)
         self._vline = ax.axvline(0, color='#e01b24', lw=1.0, visible=False)
         self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5)
         self._txt = ax.text(0, 0, '', fontsize=7, va='top', ha='left',
