@@ -60,7 +60,7 @@ class _Text(object):
 
 class LazyText(object):
     """도면 단위 높이 h 를 현재 확대 비율로 pt 환산해 보이는 범위의 글자만 그린다."""
-    MIN_PX = 3.0         # 이보다 작게 보이면 생략
+    MIN_PX = 1.5         # 이보다 작게 보이면 생략
     MAX_N = 3000
 
     def __init__(self, canvas, ax, specs):
@@ -90,7 +90,8 @@ class LazyText(object):
                 pass
         self.arts = []
 
-    def update(self, *_):
+    def update(self, *_, scale=1.0):
+        """scale: 저장 해상도 / 화면 해상도 — 캡처 때는 화면에선 너무 작아 생략한 글자도 그린다"""
         if self._busy:
             return
         self._busy = True
@@ -109,7 +110,7 @@ class LazyText(object):
             i1 = self._bisect.bisect_right(self.xs, x1 + pad)
             cnt = 0
             for x, y, s, h, rot, ha, va, color in self.specs[i0:i1]:
-                if h * ppu < self.MIN_PX or not (y0 - pad <= y <= y1 + pad):
+                if h * ppu * scale < self.MIN_PX or not (y0 - pad <= y <= y1 + pad):
                     continue
                 fp = _fp().copy()
                 fp.set_size(h * 1.12 * ppu * pt)
