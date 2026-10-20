@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
 import json
+import re
 from qgis.PyQt.QtCore import Qt, QSettings, QPointF, QRectF, QTimer
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
                              QIcon, QPixmap, QPainter, QPen, QPolygonF)
@@ -14,7 +15,7 @@ from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsChe
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
-from .network import (read_pipes, merge_layers, downstream_closure, pick_fields, PIPE_FIELDS,
+from .network import (read_pipes, merge_layers, downstream_closure, pick_fields, PIPE_FIELDS, MH_FIELDS,
                       Network, Profile, Manholes)
 from .profile_canvas import ProfileCanvas
 
@@ -167,11 +168,10 @@ class ProfileDock(QDockWidget):
                                  '· 판정 필드가 없는 레이어(준공도 등)는 기존관(회색)으로 그린다.\n'
                                  '· 필터는 시작 노선을 고르고, 그 하류는 체크한 레이어에서 방류까지 따라간다.')
         row.addWidget(self.cb_lines, 3)
-        row.addWidget(QLabel('맨홀'))
-        self.cb_mh = QgsMapLayerComboBox()
-        self.cb_mh.setFilters(QgsMapLayerProxyModel.PointLayer | QgsMapLayerProxyModel.PolygonLayer)
-        self.cb_mh.setAllowEmptyLayer(True)
-        row.addWidget(self.cb_mh, 2)
+        self.lb_mh = QLabel('맨홀: -')
+        self.lb_mh.setToolTip('맨홀 레이어는 체크한 노선 레이어마다 짝을 자동으로 찾는다\n'
+                              '(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정).')
+        row.addWidget(self.lb_mh, 2)
         row.addWidget(QLabel('DEM'))
         self.cb_dem = QgsMapLayerComboBox()
         self.cb_dem.setFilters(QgsMapLayerProxyModel.RasterLayer)
@@ -366,21 +366,14 @@ class ProfileDock(QDockWidget):
         if not any(prj.mapLayer(i) for i in ids):
             ids = [l.id() for l in prj.mapLayersByName('노선(실시설계)')]
         self._refill_lines(checked=ids)
-        for cb, k in ((self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
-            lid = s.value(KEY + k, None)
-            lyr = prj.mapLayer(lid) if lid else None
-            if lyr is None and k == 'mh':
-                lyr = next(iter(prj.mapLayersByName('계획맨홀(실시설계)')), None)
-            if k == 'dem' and not lid:
-                lyr = None                     # DEM 은 사용자가 고를 때만
-            cb.setLayer(lyr)
+        lid = s.value(KEY + 'dem', None)
+        self.cb_dem.setLayer(prj.mapLayer(lid) if lid else None)     # DEM 은 사용자가 고를 때만
         self.ed_expr.setText(s.value(KEY + 'expr', ''))
 
     def _save(self):
         s = QSettings()
         s.setValue(KEY + 'lines', [l.id() for l in self._checked_layers()])
-        for cb, k in ((self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
-            s.setValue(KEY + k, cb.currentLayer().id() if cb.currentLayer() else '')
+        s.setValue(KEY + 'dem', self.cb_dem.currentLayer().id() if self.cb_dem.currentLayer() else '')
         s.setValue(KEY + 'expr', self.ed_expr.text())
 
     # ------------------------------------------------------------ 노선 레이어(여러 개)
@@ -398,6 +391,46 @@ class ProfileDock(QDockWidget):
         for l in lines:
             self.cb_lines.addItemWithCheckState(l.name(), Qt.Checked if l.id() in order else Qt.Unchecked, l.id())
         self.cb_lines.blockSignals(False)
+
+    # ------------------------------------------------------- 노선 ↔ 맨홀 짝 자동
+    @staticmethod
+    def _container(l):
+        """레이어가 들어 있는 원본 — GPKG/파일 경로, 또는 PostGIS DB"""
+        src = l.source()
+        if l.providerType() == 'postgres':
+            m = re.search(r"dbname='?([^' ]+)", src)
+            return 'pg', (m.group(1) if m else src)
+        return 'file', src.split('|')[0].replace('\\', '/').lower()
+
+    @staticmethod
+    def _tokens(name):
+        out = set()
+        for t in re.split(r'[^0-9A-Za-z가-힣]+', name or ''):
+            for g in ('맨홀', '관로', '노선'):
+                t = t.replace(g, '')
+            if t:
+                out.add(t.lower())
+        return out
+
+    def _pair_manhole(self, line):
+        """노선 레이어 → 짝 맨홀 레이어(점·면, 맨홀번호 필드). 점수 2 미만이면 없음"""
+        kind, cont = self._container(line)
+        tok = self._tokens(line.name())
+        best = None
+        for l in QgsProject.instance().mapLayers().values():
+            if not isinstance(l, QgsVectorLayer) or l.geometryType() not in (QgsWkbTypes.PointGeometry,
+                                                                             QgsWkbTypes.PolygonGeometry):
+                continue
+            if pick_fields(l, {'n': MH_FIELDS['name'][:1]})['n'] is None:      # 맨홀번호 필드
+                continue
+            k2, c2 = self._container(l)
+            sc = (3 if (k2, c2) == (kind, cont) and kind == 'file' else 1 if (k2, c2) == (kind, cont) else 0)
+            sc += len(tok & self._tokens(l.name()))
+            if sc < 2 or not l.extent().intersects(line.extent()):
+                continue
+            if best is None or sc > best[0]:
+                best = (sc, l)
+        return best[1] if best else None
 
     def _checked_layers(self):
         prj = QgsProject.instance()
@@ -443,8 +476,17 @@ class ProfileDock(QDockWidget):
         self._update_xf()
         self._watch_selection(layers)
         self.net = Network(pipes)
-        mh = self.cb_mh.currentLayer()
-        self.mh = Manholes(mh) if isinstance(mh, QgsVectorLayer) else None
+        mhs = []
+        for l in layers:
+            m = self._pair_manhole(l)
+            if m is not None and m not in mhs:
+                mhs.append(m)
+        self.mh = Manholes(mhs) if mhs else None
+        pairs = ['%s → %s' % (l.name(), (self._pair_manhole(l).name() if self._pair_manhole(l) else '(맨홀 없음)'))
+                 for l in layers]
+        self.lb_mh.setText('맨홀: ' + (', '.join(m.name() for m in mhs) if mhs else '없음'))
+        self.lb_mh.setToolTip('노선 ↔ 맨홀 자동 짝\n' + '\n'.join(pairs) +
+                              '\n\n(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정. 겹치는 자리는 앞 줄 맨홀 우선)')
         self._save()
         self.tree.blockSignals(True)
         self.tree.clear()

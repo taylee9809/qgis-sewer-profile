@@ -388,6 +388,10 @@ class Profile(object):
                         n['gl'] = mh['gl']
                     n['mh'] = True
                     n['mh_kind'] = str(mh.get('type') or mh.get('kind') or '')
+                    k = self.nodes.index(n)
+                    p = self.pipes[min(k, len(self.pipes) - 1)]
+                    if getattr(p, 'asb', False) and '펌프' not in n['mh_kind'] and '기존' not in n['mh_kind']:
+                        n['mh_kind'] = '기존 ' + n['mh_kind']      # 기존관 구간 맨홀은 '1호기존'으로
                 else:
                     n['mh'] = n is not self.nodes[-1] and not (self._is_sub(n['name']))
         else:
@@ -462,18 +466,24 @@ class Profile(object):
 
 
 class Manholes(object):
-    def __init__(self, layer):
-        F = pick_fields(layer, MH_FIELDS)
+    """맨홀 레이어(하나 또는 여러 개). 여러 개면 앞 레이어가 우선 — 같은 자리(허용거리 안)에
+    두 레이어 맨홀이 다 있으면 앞 레이어 것을 쓴다."""
+
+    def __init__(self, layers):
+        if not isinstance(layers, (list, tuple)):
+            layers = [layers]
         self.items = []
-        for f in layer.getFeatures():
-            g = f.geometry()
-            if g is None or g.isEmpty():
-                continue
-            c = g.centroid().asPoint()
-            self.items.append(dict(xy=(c.x(), c.y()), name=str(f[F['name']]) if F['name'] and f[F['name']] else '',
-                                   gl=_num(f[F['gl']]) if F['gl'] else None,
-                                   kind=f[F['kind']] if F['kind'] else None,
-                                   type=f[F['type']] if F['type'] else None))
+        for rank, layer in enumerate(layers):
+            F = pick_fields(layer, MH_FIELDS)
+            for f in layer.getFeatures():
+                g = f.geometry()
+                if g is None or g.isEmpty():
+                    continue
+                c = g.centroid().asPoint()
+                self.items.append(dict(xy=(c.x(), c.y()), name=str(f[F['name']]) if F['name'] and f[F['name']] else '',
+                                       gl=_num(f[F['gl']]) if F['gl'] else None,
+                                       kind=f[F['kind']] if F['kind'] else None,
+                                       type=f[F['type']] if F['type'] else None, rank=rank))
         self.cell = {}
         for k, it in enumerate(self.items):
             self.cell.setdefault((int(it['xy'][0] // 10), int(it['xy'][1] // 10)), []).append(k)
@@ -484,7 +494,8 @@ class Manholes(object):
         for i in (-1, 0, 1):
             for j in (-1, 0, 1):
                 for k in self.cell.get((cx + i, cy + j), ()):
-                    d = math.dist(self.items[k]['xy'], xy)
-                    if d <= tol and (best is None or d < best[0]):
-                        best = (d, self.items[k])
+                    it = self.items[k]
+                    d = math.dist(it['xy'], xy)
+                    if d <= tol and (best is None or (it['rank'], d) < best[0]):
+                        best = ((it['rank'], d), it)
         return best[1] if best else None
