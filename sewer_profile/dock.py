@@ -316,7 +316,7 @@ class ProfileDock(QDockWidget):
         self._esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._esc.setContext(Qt.WidgetWithChildrenShortcut)
         self._esc.activated.connect(lambda: self.bt_big.setChecked(False))
-        self._sel_conns = []               # [(레이어, 슬롯)] 지도 선택 연동
+        self._sel_layers = []              # 지도 선택을 지켜보는 레이어
         self.layers, self.info = [], None
         self._focus_fid = None
         self._dot = _dot_icon()
@@ -601,7 +601,7 @@ class ProfileDock(QDockWidget):
         seq = net.order_runs(rids)
         if seq is None:
             seq = [rids[-1]]
-            self.lb_info.setText('선택한 구간들이 한 줄로 이어지지 않아 마지막 것만 그립니다.')
+            self.lb_info.setText('선택한 구간들이 한 하류 경로 위에 있지 않아 마지막 것만 그립니다.')
         if self.chk_up.isChecked():
             seq = net.main_upstream(seq[0])[:-1] + seq
         if self.chk_down.isChecked():
@@ -737,25 +737,24 @@ class ProfileDock(QDockWidget):
     # ------------------------------------------------- map → tree selection
     def _watch_selection(self, layers):
         """체크한 레이어 어느 것에서든 관을 고르면 그 관이 속한 구간을 통째로 고른다"""
-        for l, fn in self._sel_conns:
+        for l in self._sel_layers:
             try:
-                l.selectionChanged.disconnect(fn)
+                l.selectionChanged.disconnect(self._map_selection)
             except Exception:
                 pass
-        self._sel_conns = []
-        for l in layers:
-            fn = (lambda *_a, l=l: self._map_selection(l))
-            l.selectionChanged.connect(fn)
-            self._sel_conns.append((l, fn))
+        self._sel_layers = list(layers)
+        for l in self._sel_layers:
+            l.selectionChanged.connect(self._map_selection)
 
-    def _map_selection(self, lyr):
+    def _map_selection(self, *_a):
+        """체크한 레이어들에서 고른 관을 모두 합쳐 구간으로 — 떨어져 있으면 on_select 가 사이를 잇는다"""
         if self.net is None or not self.isVisible() or self.info is None:
             return
-        sel = lyr.selectedFeatureIds()
+        sel = [(l.id(), i) for l in self._sel_layers for i in l.selectedFeatureIds()]
         if not sel:
             return
         fm = self.info['fidmap']
-        fids = [f for f in (fm.get((lyr.id(), i)) for i in sel) if f in self.net.run_of]
+        fids = [f for f in (fm.get(k) for k in sel) if f in self.net.run_of]
         if not fids:
             self.lb_info.setText('고른 관 %d개는 지금 종단 망에 없습니다(필터 밖이거나 하류로 이어지지 않음).' % len(sel))
             return

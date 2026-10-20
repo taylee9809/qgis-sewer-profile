@@ -336,17 +336,14 @@ class Network(object):
         return out[::-1]
 
     def order_runs(self, rids):
-        """선택된 구간들이 상하류로 이어지면 상류→하류 순 정렬, 아니면 None"""
-        rids = list(dict.fromkeys(rids))
+        """선택된 구간들이 한 하류 경로 위에 있으면 가장 상류 것부터 가장 하류 것까지
+        (사이에 끼인 구간 포함) 상류→하류 순으로, 아니면 None"""
         s = set(rids)
-        heads = [r for r in rids if not any(c in s for c in self.runs[r]['children'])]
-        if len(heads) != 1:
-            return None
-        seq, cur = [], heads[0]
-        while cur is not None and cur in s:
-            seq.append(cur)
-            cur = self.runs[cur]['parent']
-        return seq if len(seq) == len(rids) else None
+        for r in s:
+            chain = self.downstream_chain(r)
+            if s <= set(chain):
+                return chain[:max(chain.index(x) for x in s) + 1]
+        return None
 
 
 class Profile(object):

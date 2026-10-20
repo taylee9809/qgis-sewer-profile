@@ -40,13 +40,21 @@ GRID = '#e9ebef'
 AXIS = '#dcdfe4'
 
 
+class _Figure(Figure):
+    """캡처(툴바 저장)는 화면 해상도(~96dpi)가 아니라 300dpi 로 — 글자 크기는 그림 크기 기준이라 모양은 같다"""
+
+    def savefig(self, *a, **k):
+        k.setdefault('dpi', 300)
+        return super().savefig(*a, **k)
+
+
 class ProfileCanvas(FigureCanvas):
     cursorMoved = pyqtSignal(float)     # 종단 위 마우스 → 누가거리
     cursorLeft = pyqtSignal()
     markClicked = pyqtSignal(float)     # 표시 모드에서 클릭 → 누가거리
 
     def __init__(self, parent=None):
-        self.fig = Figure(figsize=(8, 3), tight_layout=True)
+        self.fig = _Figure(figsize=(8, 3), tight_layout=True)
         super().__init__(self.fig)
         self.setParent(parent)
         self.ax = self.fig.add_subplot(111)
