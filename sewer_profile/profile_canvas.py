@@ -40,12 +40,15 @@ GRID = '#e9ebef'
 AXIS = '#dcdfe4'
 
 
+CAPTURE_DPI = 600          # 캡처 해상도
+
+
 class _Figure(Figure):
-    """캡처(툴바 저장)는 화면 해상도(~96dpi)가 아니라 300dpi 로 — 글자 크기는 그림 크기 기준이라 모양은 같다.
+    """캡처(툴바 저장)는 화면 해상도(~96dpi)가 아니라 CAPTURE_DPI 로 — 글자 크기는 그림 크기 기준이라 모양은 같다.
     성과품 표시는 화면에서 너무 작아 생략한 글자를 저장 해상도 기준으로 다시 골라 그린다."""
 
     def savefig(self, *a, **k):
-        k.setdefault('dpi', 300)
+        k.setdefault('dpi', CAPTURE_DPI)
         lazy = getattr(self.canvas, '_lazy', None)
         if lazy is not None and isinstance(k['dpi'], (int, float)):
             lazy.update(scale=k['dpi'] / self.dpi)
