@@ -15,6 +15,7 @@ BANDS = ['측    점', '거    리', '추가거리', '지 반 고', '관 저 고
 C_GROUND = '#d62728'
 C_PIPE = '#1f3fd1'
 C_PRESS = '#c2185b'
+C_ASB = '#7a7f87'          # 준공(기존) 관로
 C_MH = '#c000c0'
 C_BAND = '#1aa3a3'
 C_BAND2 = '#2ca02c'
@@ -333,7 +334,8 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
             T.add((a + b) / 2, 126.75, 'L=%.2fM' % p.length, h=min(h, 2.5), ha='center', va='center')
     runs = []
     for i, p in enumerate(prof.pipes):
-        key = ('신설압송' if '압송' in (p.kind or '') else '신설오수', round(p.d * 1000))
+        key = (('기존' if getattr(p, 'asb', False) else '신설') + ('압송' if '압송' in (p.kind or '') else '오수'),
+               round(p.d * 1000))
         if runs and runs[-1][0] == key:
             runs[-1][2] = prof.seg[i][1]
         else:
@@ -364,7 +366,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         a, b = prof.seg[i]
         if p.il_up is None or p.il_dn is None:
             continue
-        c = C_PRESS if '압송' in (p.kind or '') else C_PIPE
+        c = C_ASB if getattr(p, 'asb', False) else (C_PRESS if '압송' in (p.kind or '') else C_PIPE)
         dv = dat_at(a)
         Yp = lambda el: 117 + (el - dv) * vex
         ax.plot([a, b], [Yp(p.il_up), Yp(p.il_dn)], color=c, lw=0.9, zorder=4)
