@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """종단도 도킹 패널 — 구간 트리 + 종단 캔버스 + 지도 연동"""
 import json
-from qgis.PyQt.QtCore import Qt, QSettings, QPointF, QRectF
+from qgis.PyQt.QtCore import Qt, QSettings, QPointF, QRectF, QTimer
 from qgis.PyQt.QtGui import (QColor, QFont, QBrush, QGuiApplication, QKeySequence,
                              QIcon, QPixmap, QPainter, QPen, QPolygonF)
 from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget, QAction,
@@ -9,12 +9,13 @@ from qgis.PyQt.QtWidgets import (QDockWidget, QWidget, QVBoxLayout, QHBoxLayout,
                                  QAbstractItemView, QMessageBox, QHeaderView, QShortcut,
                                  QApplication)
 from qgis.core import (QgsProject, QgsMapLayerProxyModel, QgsCoordinateTransform, QgsPointXY, QgsGeometry,
-                       QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer)
-from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand
+                       QgsWkbTypes, QgsRectangle, QgsVectorLayer, QgsRasterLayer, QgsFeatureRequest)
+from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsCheckableComboBox
 
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
-from .network import read_pipes, Network, Profile, Manholes
+from .network import (read_pipes, merge_layers, downstream_closure, pick_fields, PIPE_FIELDS,
+                      Network, Profile, Manholes)
 from .profile_canvas import ProfileCanvas
 
 ROLE = Qt.UserRole + 1
@@ -23,6 +24,7 @@ KEY = 'sewer_profile/'
 PUMP_C = QColor('#c2185b')          # 압송 포함 구간
 BR_C = QColor('#6b7280')            # 지류(분기) — 본선은 기본색
 GRP_BG = QColor('#e8eaf0')
+ASB_C = QColor('#0f7c8a')           # 기존(준공) 관로 구간
 FIND_BG = QColor('#ffe9a8')         # 찾기에 걸린 구간
 CUR_C = QColor(224, 27, 36)         # 종단 커서(빨간 점)와 같은 색
 
@@ -157,9 +159,14 @@ class ProfileDock(QDockWidget):
         # --- 상단 설정 줄
         row = QHBoxLayout()
         row.addWidget(QLabel('노선'))
-        self.cb_line = QgsMapLayerComboBox()
-        self.cb_line.setFilters(QgsMapLayerProxyModel.LineLayer)
-        row.addWidget(self.cb_line, 2)
+        self.cb_lines = QgsCheckableComboBox()
+        self.cb_lines.setDefaultText('노선 레이어를 체크')
+        self.cb_lines.setToolTip('체크한 선 레이어를 모두 한 망으로 합쳐 그린다(여러 개 가능).\n'
+                                 '· 하류가 끊긴 말단은 다른 레이어 관 시점이 1.5 m 안이면 이어 붙인다.\n'
+                                 '· 양 끝이 같은 관은 한 번만 — 판정 필드가 있는 레이어 쪽을 남긴다.\n'
+                                 '· 판정 필드가 없는 레이어(준공도 등)는 기존관(회색)으로 그린다.\n'
+                                 '· 필터는 시작 노선을 고르고, 그 하류는 체크한 레이어에서 방류까지 따라간다.')
+        row.addWidget(self.cb_lines, 3)
         row.addWidget(QLabel('맨홀'))
         self.cb_mh = QgsMapLayerComboBox()
         self.cb_mh.setFilters(QgsMapLayerProxyModel.PointLayer | QgsMapLayerProxyModel.PolygonLayer)
@@ -309,7 +316,8 @@ class ProfileDock(QDockWidget):
         self._esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
         self._esc.setContext(Qt.WidgetWithChildrenShortcut)
         self._esc.activated.connect(lambda: self.bt_big.setChecked(False))
-        self._sel_layer = None
+        self._sel_conns = []               # [(레이어, 슬롯)] 지도 선택 연동
+        self.layers, self.info = [], None
         self._focus_fid = None
         self._dot = _dot_icon()
         self._dot_run = None               # 커서가 있는 구간(트리 빨간 점)
@@ -334,52 +342,106 @@ class ProfileDock(QDockWidget):
 
         self._restore()
         # 복원이 끝난 뒤에 연결(복원 중 build_tree→_save 가 덜 복원된 값을 저장하던 문제)
-        self.cb_line.layerChanged.connect(self._layer_changed)
+        self._rebuild = QTimer(self)
+        self._rebuild.setSingleShot(True)
+        self._rebuild.setInterval(400)               # 여러 개를 연달아 체크할 때 한 번만 다시 짓기
+        self._rebuild.timeout.connect(self.build_tree)
+        self.cb_lines.checkedItemsChanged.connect(lambda _x: self._rebuild.start())
+        prj = QgsProject.instance()
+        prj.layersAdded.connect(self._refill_lines)
+        prj.layersRemoved.connect(self._refill_lines)
         self.ed_expr.editingFinished.connect(self.build_tree)
-        if isinstance(self.cb_line.currentLayer(), QgsVectorLayer):
+        if self._checked_layers():
             self.build_tree()
 
     # ------------------------------------------------------------- settings
     def _restore(self):
         s = QSettings()
         prj = QgsProject.instance()
-        for cb, k in ((self.cb_line, 'line'), (self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
-            lid = s.value(KEY + k, '')
+        ids = s.value(KEY + 'lines', None)
+        if ids is None:                              # 이전 버전 설정(노선 1개 + 준공) 이어받기
+            ids = [v for v in (s.value(KEY + 'line', ''), s.value(KEY + 'asb', '')) if v]
+        if isinstance(ids, str):
+            ids = [ids] if ids else []
+        if not any(prj.mapLayer(i) for i in ids):
+            ids = [l.id() for l in prj.mapLayersByName('노선(실시설계)')]
+        self._refill_lines(checked=ids)
+        for cb, k in ((self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
+            lid = s.value(KEY + k, None)
             lyr = prj.mapLayer(lid) if lid else None
-            if lyr is None and k == 'line':
-                lyr = next(iter(prj.mapLayersByName('노선(실시설계)')), None)
             if lyr is None and k == 'mh':
                 lyr = next(iter(prj.mapLayersByName('계획맨홀(실시설계)')), None)
             if k == 'dem' and not lid:
                 lyr = None                     # DEM 은 사용자가 고를 때만
-            if lyr is not None:
-                cb.setLayer(lyr)
-            elif k != 'line':
-                cb.setLayer(None)
+            cb.setLayer(lyr)
         self.ed_expr.setText(s.value(KEY + 'expr', ''))
 
     def _save(self):
         s = QSettings()
-        for cb, k in ((self.cb_line, 'line'), (self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
+        s.setValue(KEY + 'lines', [l.id() for l in self._checked_layers()])
+        for cb, k in ((self.cb_mh, 'mh'), (self.cb_dem, 'dem')):
             s.setValue(KEY + k, cb.currentLayer().id() if cb.currentLayer() else '')
         s.setValue(KEY + 'expr', self.ed_expr.text())
 
+    # ------------------------------------------------------------ 노선 레이어(여러 개)
+    def _refill_lines(self, *_a, checked=None):
+        """프로젝트의 선 레이어로 체크 목록을 다시 채운다(체크 상태 유지, 체크한 것이 위로)"""
+        if checked is None:
+            checked = [l.id() for l in self._checked_layers()]
+        prj = QgsProject.instance()
+        lines = [l for l in prj.mapLayers().values()
+                 if isinstance(l, QgsVectorLayer) and l.geometryType() == QgsWkbTypes.LineGeometry]
+        order = {lid: k for k, lid in enumerate(checked)}
+        lines.sort(key=lambda l: (order.get(l.id(), 1e9), l.name()))
+        self.cb_lines.blockSignals(True)
+        self.cb_lines.clear()
+        for l in lines:
+            self.cb_lines.addItemWithCheckState(l.name(), Qt.Checked if l.id() in order else Qt.Unchecked, l.id())
+        self.cb_lines.blockSignals(False)
+
+    def _checked_layers(self):
+        prj = QgsProject.instance()
+        out = []
+        for i in range(self.cb_lines.count()):
+            if self.cb_lines.itemCheckState(i) == Qt.Checked:
+                l = prj.mapLayer(self.cb_lines.itemData(i))
+                if isinstance(l, QgsVectorLayer):
+                    out.append(l)
+        return out
+
     # ----------------------------------------------------------------- tree
     def build_tree(self):
-        lyr = self.cb_line.currentLayer()
-        if not isinstance(lyr, QgsVectorLayer):
-            QMessageBox.information(self, '종단도', '노선 레이어를 고르세요.')
+        layers = self._checked_layers()
+        if not layers:
+            QMessageBox.information(self, '종단도', '노선 레이어를 하나 이상 체크하세요.')
             return
+        has_judge = lambda l: pick_fields(l, {'j': PIPE_FIELDS['judge']})['j'] is not None
+        layers.sort(key=lambda l: not has_judge(l))  # 판정 필드 있는 레이어(설계 노선)를 앞에 — 중복이면 이쪽을 남긴다
         expr = self.ed_expr.text().strip() or None
+        lp, seeds_raw = [], []
         try:
-            pipes = read_pipes(lyr, expr)
+            for l in layers:
+                lp.append((l.id(), read_pipes(l), not has_judge(l)))
+                if expr:
+                    req = QgsFeatureRequest().setFilterExpression(expr).setNoAttributes()
+                    req.setFlags(QgsFeatureRequest.NoGeometry)
+                    seeds_raw += [(l.id(), f.id()) for f in l.getFeatures(req)]
+            pipes, info = merge_layers(lp)
         except Exception as e:
             QMessageBox.warning(self, '종단도', '노선을 읽지 못했습니다: %s' % e)
             return
-        self.layer = lyr
+        if expr:
+            seeds = set(info['fidmap'][k] for k in seeds_raw if k in info['fidmap'])
+            keep = downstream_closure(pipes, seeds)
+            pipes = {k: v for k, v in pipes.items() if k in keep}
+            if not pipes:
+                QMessageBox.information(self, '종단도', '필터에 걸리는 관이 없습니다.')
+                return
+        self.layers, self.info = layers, info
+        self.layer = layers[0]
         self._load_marks()
         self._update_xf()
-        self._watch_selection(lyr)
+        self._watch_selection(layers)
         self.net = Network(pipes)
         mh = self.cb_mh.currentLayer()
         self.mh = Manholes(mh) if isinstance(mh, QgsVectorLayer) else None
@@ -395,7 +457,8 @@ class ProfileDock(QDockWidget):
             r = net.runs[rid]
             fids = r['pipes']
             pump = any('압송' in (net.pipes[i].kind or '') for i in fids)
-            it = QTreeWidgetItem([net.run_short(r) + ('  (압송)' if pump else ''),
+            asb = all(getattr(net.pipes[i], 'asb', False) for i in fids)
+            it = QTreeWidgetItem([net.run_short(r) + ('  (준공)' if asb else '') + ('  (압송)' if pump else ''),
                                   format(r['length'], ',.1f')])
             it.setData(0, ROLE, rid)
             it.setData(0, ROLE_TXT, ' '.join(net.pipes[i].name for i in fids).upper())
@@ -411,9 +474,13 @@ class ProfileDock(QDockWidget):
             z0 = net.pipes[fids[0]].zone
             if z0:
                 tip += '\n지구: %s' % z0
+            if asb:
+                tip += '\n준공(기존) 관로 — 준공 레이어에서 이어 붙임'
             for c in (0, 1):
                 it.setToolTip(c, tip)
-                if pump:
+                if asb:
+                    it.setForeground(c, ASB_C)
+                elif pump:
                     it.setForeground(c, PUMP_C)
                 elif not main:
                     it.setForeground(c, BR_C)       # 지류는 흐리게 → 본선이 뜬다
@@ -447,8 +514,15 @@ class ProfileDock(QDockWidget):
         self._item_map = self._items_by_run()
         self._apply_find()
         njun = sum(1 for n, v in net.inn.items() if len(v) >= 2)
-        self.lb_info.setText('관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d' % (
-            len(net.pipes), len(net.runs), njun, len(net.roots())))
+        info = '관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d' % (
+            len(net.pipes), len(net.runs), njun, len(net.roots()))
+        if len(self.layers) > 1:
+            a = self.info
+            info += '\n레이어 %d개 합침 · 레이어 간 접속 %d곳 · 중복 %d개 제외' % (len(self.layers), len(a['joins']), a['dup'])
+            far = [j for j in a['joins'] if j[2] >= 0.05]
+            if far:
+                info += '\n좌표 보정: ' + ', '.join('%s→%s %.2fm' % j for j in far)
+        self.lb_info.setText(info)
 
     def _apply_find(self, txt=None):
         q = (txt if txt is not None else self.ed_find.text()).strip().upper()
@@ -619,24 +693,29 @@ class ProfileDock(QDockWidget):
         prof.dem = out or None
 
     # ------------------------------------------------- map → tree selection
-    def _layer_changed(self, lyr):
-        if isinstance(lyr, QgsVectorLayer):
-            self.build_tree()
-
-    def _watch_selection(self, lyr):
-        if self._sel_layer is not None:
+    def _watch_selection(self, layers):
+        """체크한 레이어 어느 것에서든 관을 고르면 그 관이 속한 구간을 통째로 고른다"""
+        for l, fn in self._sel_conns:
             try:
-                self._sel_layer.selectionChanged.disconnect(self._map_selection)
+                l.selectionChanged.disconnect(fn)
             except Exception:
                 pass
-        self._sel_layer = lyr
-        lyr.selectionChanged.connect(self._map_selection)
+        self._sel_conns = []
+        for l in layers:
+            fn = (lambda *_a, l=l: self._map_selection(l))
+            l.selectionChanged.connect(fn)
+            self._sel_conns.append((l, fn))
 
-    def _map_selection(self, selected, deselected, clear):
-        if self.net is None or not self.isVisible():
+    def _map_selection(self, lyr):
+        if self.net is None or not self.isVisible() or self.info is None:
             return
-        fids = [f for f in self.layer.selectedFeatureIds() if f in self.net.run_of]
+        sel = lyr.selectedFeatureIds()
+        if not sel:
+            return
+        fm = self.info['fidmap']
+        fids = [f for f in (fm.get((lyr.id(), i)) for i in sel) if f in self.net.run_of]
         if not fids:
+            self.lb_info.setText('고른 관 %d개는 지금 종단 망에 없습니다(필터 밖이거나 하류로 이어지지 않음).' % len(sel))
             return
         rids = list(dict.fromkeys(self.net.run_of[f] for f in fids))
         self._focus_fid = fids[0] if len(fids) == 1 else None
@@ -775,9 +854,11 @@ class ProfileDock(QDockWidget):
 
     # -------------------------------------------------------------- cleanup
     def cleanup(self):
-        if self._sel_layer is not None:
+        self._watch_selection([])
+        prj = QgsProject.instance()
+        for sig in (prj.layersAdded, prj.layersRemoved):
             try:
-                self._sel_layer.selectionChanged.disconnect(self._map_selection)
+                sig.disconnect(self._refill_lines)
             except Exception:
                 pass
         try:

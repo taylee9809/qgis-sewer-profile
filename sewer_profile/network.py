@@ -21,6 +21,7 @@ PIPE_FIELDS = {
     'slope': ['경사퍼밀'],
     'flow': ['금회_누가유량_m3d', '누가유량_m3d'],
     'vel': ['금회_실유속_mps', '실유속_mps'],
+    'ftype': ['자연유하/압송'],
 }
 MH_FIELDS = {
     'name': ['맨홀번호', 'name'],
@@ -111,7 +112,7 @@ def short_range(a, b):
 
 class Pipe(object):
     __slots__ = ('fid', 'name', 'pts', 'length', 'il_up', 'il_dn', 'd', 'gl_up', 'kind', 'obs',
-                 'judge', 'judge_w', 'zone', 'slope', 'flow', 'vel', 'a', 'b')
+                 'judge', 'judge_w', 'zone', 'slope', 'flow', 'vel', 'a', 'b', 'ftype', 'asb')
 
 
 def read_pipes(layer, expression=None):
@@ -141,8 +142,87 @@ def read_pipes(layer, expression=None):
         p.judge_w = g('judge_w')
         p.zone = g('zone')
         p.slope, p.flow, p.vel = _num(g('slope')), _num(g('flow')), _num(g('vel'))
+        p.ftype = str(g('ftype') or '')
+        p.asb = p.kind.strip() == '기존'          # 노선에 편입된 준공관(구분=기존)은 기존관으로 표시
         pipes[p.fid] = p
     return pipes
+
+
+JOIN_TOL = 1.5   # 다른 레이어 관 시점에 말단을 잇는 허용(m) — 준공 좌표가 1 m 안팎 밀린 지구가 있다(마사)
+DUP_TOL = 0.5    # 다른 레이어에 같은 관(양 끝 일치)이 있으면 중복으로 본다
+LAYER_STEP = 10000000
+
+
+def net_fid(k, fid):
+    """k 번째 레이어의 fid → 망 안의 fid (첫 레이어는 그대로, 나머지는 음수로 겹치지 않게)"""
+    return fid if k == 0 else -(k * LAYER_STEP + fid + 1)
+
+
+def merge_layers(layers):
+    """여러 노선 레이어의 관을 한 망으로 합친다.
+
+    layers: [(레이어id, {fid: Pipe}, 기존관레이어여부)] — 앞 레이어가 우선(중복이면 앞 것을 남김).
+    · 중복: 양 끝이 DUP_TOL 안에서 일치하는 관은 뒤 레이어 것을 버리고 앞 관으로 대응시킨다.
+    · 접속: 하류로 이어지는 관이 없는 말단은, 다른 레이어 관의 시점이 JOIN_TOL 안에 있으면 그 시점으로
+      말단 좌표를 옮겨 잇는다(메모리에서만 — 레이어는 그대로).
+    반환: (pipes, info) — info['fidmap'] = {(레이어id, fid): 망fid}"""
+    out, fidmap, src, dup, joins = {}, {}, {}, 0, []
+    for k, (lid, pipes, existing) in enumerate(layers):
+        kept = list(out.values())
+        for p in pipes.values():
+            a, b = p.pts[0], p.pts[-1]
+            m = next((q for q in kept if math.dist(a, q.pts[0]) < DUP_TOL and math.dist(b, q.pts[-1]) < DUP_TOL), None)
+            if m is not None:
+                fidmap[(lid, p.fid)] = m.fid
+                dup += 1
+                continue
+            nf = net_fid(k, p.fid)
+            fidmap[(lid, p.fid)] = nf
+            p.fid = nf
+            p.pts = list(p.pts)
+            if existing:
+                p.asb = True
+                p.kind = '기존 ' + ('압송' if '압송' in (p.ftype or '') + (p.kind or '') else '자연유하')
+                p.judge = p.judge_w = None
+            out[nf] = p
+            src[nf] = k
+    sn = _Snap(SNAP)
+    has_out = set(sn.key(*p.pts[0]) for p in out.values())
+    starts = [(p.pts[0], p) for p in out.values()]
+    for p in out.values():
+        e = p.pts[-1]
+        if sn.key(*e) in has_out:
+            continue
+        best = None
+        for s, q in starts:
+            if src[q.fid] == src[p.fid] or q is p:
+                continue
+            d = math.dist(e, s)
+            if d <= JOIN_TOL and (best is None or d < best[0]):
+                best = (d, q)
+        if best is None:
+            continue
+        q = best[1]
+        joins.append((p.name, q.name, round(best[0], 3)))
+        p.pts = p.pts[:-1] + [q.pts[0]]
+        p.length = sum(math.dist(a, b) for a, b in zip(p.pts, p.pts[1:]))
+    return out, dict(fidmap=fidmap, dup=dup, joins=joins)
+
+
+def downstream_closure(pipes, seeds):
+    """seeds(망fid) 와 그 하류로 방류까지 이어지는 관 전부"""
+    sn = _Snap(SNAP)
+    out_of = {}
+    for p in pipes.values():
+        out_of.setdefault(sn.key(*p.pts[0]), []).append(p.fid)
+    keep, stack = set(), [f for f in seeds if f in pipes]
+    while stack:
+        f = stack.pop()
+        if f in keep:
+            continue
+        keep.add(f)
+        stack += out_of.get(sn.key(*pipes[f].pts[-1]), [])
+    return keep
 
 
 class _Snap(object):
