@@ -41,6 +41,11 @@ AXIS = '#dcdfe4'
 
 
 CAPTURE_DPI = 600          # 캡처 해상도
+LW_ZOOM = (0.15, 4.0)      # 줌 연동 선 굵기 배율 하한·상한
+LINE_SCALE = 1.0 / 3.0     # 전체 선 굵기 배율 (261021 사용자: 기존의 1/3 이 적당)
+# 원래 굵기(배율 1)가 되는 줌 = 화면 1인치에 담기는 가로 m. 창 크기·캡처 dpi 와 무관한 고정 기준
+# (처음 화면을 기준으로 잡으면 패널이 펼쳐지기 전 폭으로 잡혀 틀어진다, 261021)
+LW_REF_UPI = {'drawing': 120.0, 'simple': 100.0}   # 성과품 처음 화면(패널 폭 ~10in, 가로 ~1300 m)에서 ≈1
 
 
 class _Figure(Figure):
@@ -79,6 +84,9 @@ class ProfileCanvas(FigureCanvas):
         self._vline = None
         self._dot = None
         self._txt = None
+        self.line_scale = LINE_SCALE
+        self._lw_base = []         # [(artist, 원래 굵기)] — 줌 연동용
+        self._lw_span = None       # 배율 1 이 되는 1인치당 m (LW_REF_UPI)
         self.mpl_connect('motion_notify_event', self._on_move)
         self.mpl_connect('button_press_event', self._on_click)
         self.mpl_connect('axes_leave_event', lambda e: self.cursorLeft.emit())
@@ -120,6 +128,7 @@ class ProfileCanvas(FigureCanvas):
             self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5, zorder=10)
             self._txt = ax.text(0.005, 0.99, '', transform=ax.transAxes, fontsize=7.5, va='top', ha='left', zorder=11,
                                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.92), visible=False)
+            self._lw_init()
             self.draw_idle()
             return
         # 지반선
@@ -237,6 +246,46 @@ class ProfileCanvas(FigureCanvas):
         self._dot, = ax.plot([], [], 'o', color='#e01b24', ms=5)
         self._txt = ax.text(0, 0, '', fontsize=7, va='top', ha='left',
                             bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#e01b24', alpha=0.9), visible=False)
+        self._lw_init()
+        self.draw_idle()
+
+    # ------------------------------------------------------------ 선 굵기(줌 연동)
+    def _lw_init(self):
+        """그린 선들의 원래 굵기를 기억하고, 가로 범위가 바뀔 때마다 굵기를 다시 매긴다.
+        matplotlib 선 굵기는 화면 pt 고정이라 줌아웃하면 선끼리 뭉쳐 두껍게 보인다 → CAD 처럼 줌에 비례."""
+        ax = self.ax
+        skip = {id(self._vline), id(self._dot)}       # 측점 커서는 그대로
+        base = []
+        for a in list(ax.lines) + list(ax.patches):
+            if id(a) not in skip:
+                base.append((a, a.get_linewidth()))
+        for c in ax.collections:
+            base.append((c, list(c.get_linewidths())))
+        self._lw_base = base
+        self._lw_span = LW_REF_UPI.get(self.style, 48.0)
+        ax.callbacks.connect('xlim_changed', lambda _ax: self._lw_apply())   # ax.clear() 가 콜백을 비우므로 매번 연결
+        self._lw_apply()
+
+    def _lw_apply(self):
+        if not self._lw_base or not self._lw_span:
+            return
+        z = self._lw_span / self._upp()          # >1 줌인, <1 줌아웃 (창 크기 변경은 영향 없음)
+        k = min(max(z, LW_ZOOM[0]), LW_ZOOM[1]) * self.line_scale
+        for a, w in self._lw_base:
+            if isinstance(w, list):
+                a.set_linewidths([v * k for v in w])
+            else:
+                a.set_linewidth(w * k)
+
+    def _upp(self):
+        """화면 1인치당 가로 m — 줌 배율의 기준(창을 넓혀도 같은 줌이면 같은 값)"""
+        x0, x1 = self.ax.get_xlim()
+        wpx = max(self.ax.get_window_extent().width, 1.0)
+        return max(abs(x1 - x0), 1e-9) / wpx * self.figure.dpi
+
+    def set_line_scale(self, v):
+        self.line_scale = float(v)
+        self._lw_apply()
         self.draw_idle()
 
     def _draw_marks(self, prof):
