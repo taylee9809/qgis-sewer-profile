@@ -377,8 +377,13 @@ class Profile(object):
         last = self.pipes[-1]
         self.nodes.append(dict(x=self.total, xy=last.pts[-1], name='', gl=None, il_in=last.il_dn, il_out=None))
         if manholes:
-            for n in self.nodes:
-                mh = manholes.near(n['xy'], 1.5)
+            # 준공(기존) 관 구간 맨홀은 준공 맨홀 레이어(뒤 순번) 이름을 먼저 — 같은 자리에 계획맨홀이 있으면
+            # 계획 이름(MS-A-027·우림식 MS-G-014 등)이 준공 이름(MS08·MS-G-013)을 덮던 문제 (261021)
+            asb_rank = manholes.nranks - 1 if manholes.nranks > 1 else None
+            for k, n in enumerate(self.nodes):
+                p = self.pipes[min(k, len(self.pipes) - 1)]
+                pref = asb_rank if getattr(p, 'asb', False) else (0 if asb_rank is not None else None)
+                mh = manholes.near(n['xy'], 1.5, pref)
                 if mh:
                     n['name'] = mh['name'] or n['name']
                     if mh.get('gl') is not None and (n['gl'] is None or n is self.nodes[-1]):
@@ -485,7 +490,8 @@ class Manholes(object):
         for k, it in enumerate(self.items):
             self.cell.setdefault((int(it['xy'][0] // 10), int(it['xy'][1] // 10)), []).append(k)
 
-    def near(self, xy, tol):
+    def near(self, xy, tol, pref=None):
+        """pref: 먼저 쓸 레이어 순번(없으면 앞 레이어 우선). 준공 관 구간은 준공 맨홀 이름을 쓰려고."""
         cx, cy = int(xy[0] // 10), int(xy[1] // 10)
         best = None
         for i in (-1, 0, 1):
@@ -493,6 +499,11 @@ class Manholes(object):
                 for k in self.cell.get((cx + i, cy + j), ()):
                     it = self.items[k]
                     d = math.dist(it['xy'], xy)
-                    if d <= tol and (best is None or (it['rank'], d) < best[0]):
-                        best = ((it['rank'], d), it)
+                    key = ((it['rank'] != pref) if pref is not None else it['rank'], d)
+                    if d <= tol and (best is None or key < best[0]):
+                        best = (key, it)
         return best[1] if best else None
+
+    @property
+    def nranks(self):
+        return 1 + max((it['rank'] for it in self.items), default=0)
