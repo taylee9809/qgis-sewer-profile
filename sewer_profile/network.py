@@ -148,7 +148,7 @@ def read_pipes(layer, expression=None):
     return pipes
 
 
-JOIN_TOL = 1.5   # 다른 레이어 관 시점에 말단을 잇는 허용(m) — 준공 좌표가 1 m 안팎 밀린 지구가 있다(A지구)
+JOIN_TOL = 1.5   # 다른 레이어 관 시점에 말단을 잇는 허용(m) — 준공 좌표가 1 m 안팎 밀린 지구가 있다
 DUP_TOL = 0.5    # 다른 레이어에 같은 관(양 끝 일치)이 있으면 중복으로 본다
 LAYER_STEP = 10000000
 
@@ -378,7 +378,7 @@ class Profile(object):
         self.nodes.append(dict(x=self.total, xy=last.pts[-1], name='', gl=None, il_in=last.il_dn, il_out=None))
         if manholes:
             # 준공(기존) 관 구간 맨홀은 준공 맨홀 레이어(뒤 순번) 이름을 먼저 — 같은 자리에 계획맨홀이 있으면
-            # 계획 이름(SW-A-027·실무식 SW-G-014 등)이 준공 이름(SW08·SW-G-013)을 덮던 문제 (261021)
+            # 계획 이름(SW-A-027 등)이 준공 이름(SW08 등)을 덮던 문제 (261021)
             asb_rank = manholes.nranks - 1 if manholes.nranks > 1 else None
             for k, n in enumerate(self.nodes):
                 p = self.pipes[min(k, len(self.pipes) - 1)]

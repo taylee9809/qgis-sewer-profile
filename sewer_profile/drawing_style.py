@@ -309,7 +309,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         if room > len(s1) * 1.1:
             T.add(mid, 93.75, s1, h=2.0, ha='center', va='center')
             T.add(mid, 101.25, s2, h=2.0, ha='center', va='center')
-        else:                                  # 폭 부족 — 실무처럼 기준선 위 3줄
+        else:                                  # 폭 부족 — 실무 도면처럼 기준선 위 3줄
             T.add(mid, 117.6, 'H=%.2fM' % H, h=1.6, ha='center', va='bottom')
             T.add(mid, 119.7, 'L=%.2fM' % L, h=1.6, ha='center', va='bottom')
             T.add(mid, 121.8, s2, h=1.6, ha='center', va='bottom')
