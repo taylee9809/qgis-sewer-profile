@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""우림 종단면도 DXF 서식을 흉내낸 '도면식' 종단.
+"""실무 종단면도 DXF 서식을 흉내낸 '도면식' 종단.
 
 좌표: 가로 1 단위 = 1 m (H 1:1000), 세로 Y = 117 + (EL − DATUM) × VEX (VEX 5 = V 1:200)
 밴드(아래→위, 각 15): 측점 · 거리 · 추가거리 · 지반고 · 관저고 · 토피 · 구배
@@ -151,7 +151,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
     ils = [v for p in prof.pipes for v in (p.il_up, p.il_dn) if v is not None]
     obs_el = [o['el'] for p in prof.pipes for o in p.obs]
     lo = min(ils + obs_el) if (ils or obs_el) else 0.0
-    # ---- DATUM 구간: 우림 도면처럼 높이가 벗어나면 맨홀에서 DATUM 을 바꾼다(단절선)
+    # ---- DATUM 구간: 실무 도면처럼 높이가 벗어나면 맨홀에서 DATUM 을 바꾼다(단절선)
     def pipe_lo(p):
         v = [x for x in (p.il_up, p.il_dn) if x is not None] + [o['el'] for o in p.obs]
         return (min(v) - p.d) if v else None
@@ -248,7 +248,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
     vl = []
     lx_prev = -1e9
     for x, pr in sta:
-        lx = max(x, lx_prev + 2.7)        # 글자 겹침 회피(우림 도면도 옆으로 민다)
+        lx = max(x, lx_prev + 2.7)        # 글자 겹침 회피(실무 도면도 옆으로 민다)
         lx_prev = lx
         gl = gfun(x)
         i, il = prof.invert_at(x)
@@ -309,7 +309,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         if room > len(s1) * 1.1:
             T.add(mid, 93.75, s1, h=2.0, ha='center', va='center')
             T.add(mid, 101.25, s2, h=2.0, ha='center', va='center')
-        else:                                  # 폭 부족 — 우림처럼 기준선 위 3줄
+        else:                                  # 폭 부족 — 실무 도면처럼 기준선 위 3줄
             T.add(mid, 117.6, 'H=%.2fM' % H, h=1.6, ha='center', va='bottom')
             T.add(mid, 119.7, 'L=%.2fM' % L, h=1.6, ha='center', va='bottom')
             T.add(mid, 121.8, s2, h=1.6, ha='center', va='bottom')
