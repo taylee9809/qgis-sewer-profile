@@ -1,7 +1,38 @@
 # Sewer Profile Viewer (QGIS 플러그인)
 
+[English](README.en.md) | 한국어
+
 하수관로 노선을 **분기점 기준 구간 트리**로 나누고, 고른 노선의 **종단도**를 QGIS 하단 패널에 그린다.
 지도에서 노선 위에 마우스를 올리면 빨간 점이 노선을 따라가고, 종단도에 같은 측점이 표시된다(종단 → 지도도 동작).
+
+## 설치
+
+### 가장 쉬운 방법: AI에게 맡기기
+Claude Code, Cursor 같이 **내 PC에서 명령을 실행할 수 있는 AI**에게 이렇게 말하면 된다.
+
+> https://github.com/taylee9809/qgis-sewer-profile QGIS 플러그인 설치해줘
+
+AI가 이 README의 [AI용 설치 절차](#ai용-설치-절차)를 읽고 내려받기·압축 풀기·활성화까지 알아서 한다.
+끝나면 QGIS를 다시 켜고 도구막대의 종단도 아이콘을 누르면 된다.
+(웹 채팅만 되는 AI는 내 PC에 파일을 놓을 수 없으니 아래 직접 설치를 따른다.)
+
+### 직접 설치
+1. [최신 릴리스](https://github.com/taylee9809/qgis-sewer-profile/releases/latest)에서 `sewer_profile.zip` 을 받는다.
+2. QGIS → **플러그인 → 플러그인 관리 및 설치 → ZIP에서 설치** → 받은 zip 선택 → **플러그인 설치**.
+3. **설치됨** 탭에서 `Sewer Profile Viewer` 가 체크돼 있는지 확인 → 도구막대 아이콘으로 패널 열기.
+
+QGIS 3.22 이상. 추가로 깔 것은 없다(matplotlib 은 QGIS 에 들어 있다).
+
+### AI용 설치 절차
+AI 에이전트가 따를 절차. 사람은 읽지 않아도 된다.
+1. 받기: `https://github.com/taylee9809/qgis-sewer-profile/releases/latest/download/sewer_profile.zip`
+2. 플러그인 폴더(`<plugins>`)에 풀어서 `<plugins>/sewer_profile/metadata.txt` 가 되게 한다. 폴더 이름은 반드시 `sewer_profile`.
+   - Windows: `%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins`
+   - macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins`
+   - Linux: `~/.local/share/QGIS/QGIS3/profiles/default/python/plugins`
+   - 프로필이 `default` 가 아니면 `profiles/` 아래 실제 프로필 이름을 쓴다. 이미 `sewer_profile` 폴더가 있으면 지우고 새로 푼다(업데이트).
+3. 활성화: **QGIS 를 끈 상태에서** `profiles/<프로필>/QGIS/QGIS3.ini` 의 `[PythonPlugins]` 절에 `sewer_profile=true` 를 넣는다(절이 없으면 만든다). QGIS 가 켜져 있으면 끌 때 ini 를 덮어쓰므로 사용자에게 먼저 QGIS 를 끄라고 하거나, 대신 플러그인 관리자에서 체크하라고 안내한다.
+4. 사용자에게 QGIS 를 다시 켜고 도구막대의 Sewer Profile 아이콘을 누르라고 알린다. 레이어 필드 이름이 아래 표와 다르면 `sewer_profile/network.py` 의 `PIPE_FIELDS` / `MH_FIELDS` 에 후보를 추가하면 된다는 것도 알린다.
 
 ## 기능
 - 노선 레이어 → 관 그래프(끝점 0.05 m 이내 동일 노드) → 합류·분기점에서 끊은 구간(run) 트리
@@ -25,7 +56,7 @@
   - 지도 커서가 화면 밖으로 나가면 종단이 따라 이동
 - 표시: 간단 — EL 축 그래프, 관 색(구분/수리계산 결과)
 
-## 레이어 필드(기본: 대술·신양 `노선(실시설계)`)
+## 레이어 필드(기본 이름)
 | 용도 | 필드 |
 |---|---|
 | 관번호 | `관번호` |
@@ -39,8 +70,8 @@
 다른 이름을 쓰려면 `sewer_profile/network.py` 의 `PIPE_FIELDS` / `MH_FIELDS` 후보 목록에 추가한다.
 도형 방향은 **상류 → 하류** 여야 한다.
 
-## 설치(로컬 개발)
-QGIS 플러그인 폴더에 정션으로 연결:
+## 개발용 설치
+저장소를 받아 QGIS 플러그인 폴더에 정션으로 연결:
 ```powershell
 New-Item -ItemType Junction -Path "$env:APPDATA\QGIS\QGIS3\profiles\default\python\plugins\sewer_profile" -Target "<repo>\sewer_profile"
 ```
