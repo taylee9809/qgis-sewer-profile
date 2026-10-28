@@ -29,6 +29,7 @@ JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유
 NOJUDGE = '#4b5563'         # 판정값 없음 — 지반(회색)과 구분되게 진하게
 MARK = '#e8590c'            # 표시(펜) 마크
 GROUND = '#878d96'          # 지반선 — 중립 회색(색은 관에만 주려고)
+DEM_LINE = '#f59e0b'        # 실측 표고점(DEM) 지반선 — 주황(추가선)
 EARTH = '#f3f4f6'           # 지반 아래
 from .drawing_style import C_PIPE as PIPE, C_PRESS as PRESS, C_ASB as ASB   # 성과품과 같은 색
 MH = '#2b2b2b'              # 맨홀·지장물 세로선(얇은 검정 점선)
@@ -135,11 +136,15 @@ class ProfileCanvas(FigureCanvas):
         gline = None
         if getattr(prof, 'dem', None):
             xs, ys = zip(*prof.dem)
-            ax.plot(xs, ys, color=GROUND, lw=1.2, zorder=3)
-            gline = (xs, ys)
-            if prof.ground:
+            if prof.ground:                      # 설계 지반선(회색) + 실측 DEM 지반선(주황) 둘 다
                 gx, gy = zip(*prof.ground)
+                ax.plot(gx, gy, color=GROUND, lw=1.3, zorder=3)
                 ax.plot(gx, gy, 'o', color=GROUND, ms=2.6, zorder=3)
+                ax.plot(xs, ys, color=DEM_LINE, lw=1.2, zorder=3.5)
+                gline = (gx, gy)
+            else:
+                ax.plot(xs, ys, color=GROUND, lw=1.2, zorder=3)
+                gline = (xs, ys)
         elif prof.ground:
             gx, gy = zip(*prof.ground)
             ax.plot(gx, gy, color=GROUND, lw=1.3, zorder=3)
@@ -163,12 +168,17 @@ class ProfileCanvas(FigureCanvas):
             else:
                 c, key = PIPE, '자연유하'
             used.setdefault(key, c)
-            ax.fill_between([x0, x1], [p.il_up, p.il_dn], [p.il_up + p.d, p.il_dn + p.d],
+            if p.ilp:                               # 압송관 — 중간 관저고(오르내림) 꺾은선
+                px = [x0 + (x1 - x0) * f for f, _ in p.ilp]
+                py = [y for _, y in p.ilp]
+            else:
+                px, py = [x0, x1], [p.il_up, p.il_dn]
+            ax.fill_between(px, py, [y + p.d for y in py],
                             color=c, alpha=0.85, lw=0, zorder=4)
-            ax.plot([x0, x1], [p.il_up, p.il_dn], color=c, lw=1.1, zorder=5,
+            ax.plot(px, py, color=c, lw=1.1, zorder=5,
                     solid_capstyle='butt')          # 관이 얇아도 보이게 관저선만
-            ymin += [p.il_up, p.il_dn]
-            ymax += [p.il_up + p.d, p.il_dn + p.d]
+            ymin += py
+            ymax += [y + p.d for y in py]
             # 지장물
             for o in p.obs:
                 xo = x0 + o['sta'] * (p.length / max(p.length, 1e-9))
@@ -367,10 +377,13 @@ class ProfileCanvas(FigureCanvas):
         prof = self.prof
         i, il = prof.invert_at(s)
         p = prof.pipes[i]
-        gl = prof.dem_at(s) if getattr(prof, 'dem', None) else prof.ground_at(s)
+        dem = getattr(prof, 'dem', None)
+        gl = prof.ground_at(s) if prof.ground else (prof.dem_at(s) if dem else None)
         lines = ['측점 %.2f m' % s, p.name + (' (압송)' if '압송' in (p.kind or '') else '')]
         if gl is not None:
             lines.append('지반고 %.2f' % gl)
+        if dem and prof.ground:
+            lines.append('실측 지반 %.2f' % prof.dem_at(s))
         if il is not None:
             lines.append('관저고 %.2f  D%d' % (il, round(p.d * 1000)))
         if gl is not None and il is not None:

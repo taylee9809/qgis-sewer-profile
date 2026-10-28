@@ -22,6 +22,7 @@ PIPE_FIELDS = {
     'flow': ['금회_누가유량_m3d', '누가유량_m3d'],
     'vel': ['금회_실유속_mps', '실유속_mps'],
     'ftype': ['자연유하/압송'],
+    'ilp': ['압송_종단'],       # '거리:관저고;거리:관저고…' — 압송관의 중간 관저고(오르내림)
 }
 MH_FIELDS = {
     'name': ['맨홀번호', 'name'],
@@ -112,7 +113,43 @@ def short_range(a, b):
 
 class Pipe(object):
     __slots__ = ('fid', 'name', 'pts', 'length', 'il_up', 'il_dn', 'd', 'gl_up', 'kind', 'obs',
-                 'judge', 'judge_w', 'zone', 'slope', 'flow', 'vel', 'a', 'b', 'ftype', 'asb')
+                 'judge', 'judge_w', 'zone', 'slope', 'flow', 'vel', 'a', 'b', 'ftype', 'asb', 'ilp')
+
+    def il_values(self):
+        """관저고 극값 계산용 — 양끝 + 중간 관저고"""
+        v = [self.il_up, self.il_dn] + [y for _, y in (self.ilp or [])]
+        return [x for x in v if x is not None]
+
+    def il_at(self, t):
+        """관 위치 t(0~1)의 관저고. 중간 관저고(ilp)가 있으면 꺾은선, 없으면 직선"""
+        if self.ilp:
+            q = self.ilp
+            if t <= q[0][0]:
+                return q[0][1]
+            for (t0, y0), (t1, y1) in zip(q, q[1:]):
+                if t0 <= t <= t1:
+                    return y0 if t1 == t0 else y0 + (y1 - y0) * (t - t0) / (t1 - t0)
+            return q[-1][1]
+        if self.il_up is None or self.il_dn is None:
+            return None
+        return self.il_up + (self.il_dn - self.il_up) * t
+
+
+def parse_ilp(text):
+    """'0:38.96;45.4:42.72;379.3:47.67' → [(0.0, 38.96), (0.12, 42.72), (1.0, 47.67)] (거리는 전체 대비 비율로)"""
+    if not text or str(text) == 'NULL':
+        return None
+    pts = []
+    for tok in str(text).split(';'):
+        try:
+            d, y = tok.split(':')
+            pts.append((float(d), float(y)))
+        except ValueError:
+            continue
+    if len(pts) < 2 or pts[-1][0] <= 0:
+        return None
+    tot = pts[-1][0]
+    return [(d / tot, y) for d, y in pts]
 
 
 def read_pipes(layer, expression=None):
@@ -133,6 +170,7 @@ def read_pipes(layer, expression=None):
         p.pts = pts
         p.length = sum(math.dist(a, b) for a, b in zip(pts, pts[1:]))
         p.il_up, p.il_dn = _num(g('il_up')), _num(g('il_dn'))
+        p.ilp = parse_ilp(g('ilp'))
         dmm = _num(g('dia'))
         p.d = (dmm / 1000.0 if dmm and dmm > 20 else dmm) or 0.2
         p.gl_up = _num(g('gl_up'))
@@ -464,7 +502,7 @@ class Profile(object):
         if p.il_up is None or p.il_dn is None:
             return i, None
         t = 0 if x1 == x0 else (s - x0) / (x1 - x0)
-        return i, p.il_up + (p.il_dn - p.il_up) * t
+        return i, p.il_at(t)
 
 
 class Manholes(object):

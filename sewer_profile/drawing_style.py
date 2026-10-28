@@ -13,6 +13,7 @@ from matplotlib.patches import Ellipse, Rectangle, Polygon, Circle
 
 BANDS = ['측    점', '거    리', '추가거리', '지 반 고', '관 저 고', '토    피', '구    배']
 C_GROUND = '#d62728'
+C_DEM = '#f59e0b'          # 실측 표고점(DEM) 지반선 — 주황
 C_PIPE = '#1f3fd1'
 C_PRESS = '#c2185b'
 C_ASB = '#7a7f87'          # 준공(기존) 관로
@@ -148,12 +149,12 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
     T = _Text()
     total = prof.total
     # ---- DATUM
-    ils = [v for p in prof.pipes for v in (p.il_up, p.il_dn) if v is not None]
+    ils = [v for p in prof.pipes for v in p.il_values()]
     obs_el = [o['el'] for p in prof.pipes for o in p.obs]
     lo = min(ils + obs_el) if (ils or obs_el) else 0.0
     # ---- DATUM 구간: 실무 도면처럼 높이가 벗어나면 맨홀에서 DATUM 을 바꾼다(단절선)
     def pipe_lo(p):
-        v = [x for x in (p.il_up, p.il_dn) if x is not None] + [o['el'] for o in p.obs]
+        v = p.il_values() + [o['el'] for o in p.obs]
         return (min(v) - p.d) if v else None
 
     def win_lo(i):
@@ -204,7 +205,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
                 sta[-1] = (x, pr)
             continue
         sta.append((x, pr))
-    gfun = prof.dem_at if getattr(prof, 'dem', None) else prof.ground_at
+    gfun = prof.ground_at if prof.ground else (prof.dem_at if getattr(prof, 'dem', None) else prof.ground_at)
 
     def pd_in(i):
         return prof.pipes[i - 1].d if i > 0 else prof.pipes[0].d
@@ -347,22 +348,25 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         T.add((a + b) / 2, 108.5, 'L=%.2fM' % (b - a), h=2.5, ha='center', va='top')
 
     # ---- 지반선 / 관
-    if getattr(prof, 'dem', None):
-        gpts = prof.dem
-    else:
-        gpts = prof.ground
-    if gpts:                          # DATUM 구간마다 끊어 그림
+    def _ground_line(gpts, at, color, lw, z):
+        if not gpts:                  # DATUM 구간마다 끊어 그림
+            return
         bounds = [x for x, _ in dsegs] + [total + 1]
         for k in range(len(dsegs)):
             xs, xe = bounds[k], bounds[k + 1]
             pts = [(x, g) for x, g in gpts if xs - 1e-6 <= x <= xe + 1e-6]
             if k + 1 < len(dsegs):
-                ge = gfun(xe)
+                ge = at(xe)
                 if ge is not None and not any(abs(x - xe) < 1e-6 for x, _ in pts):
                     pts.append((xe, ge))
             if pts:
                 ax.plot([x for x, _ in pts], [Y(g, x, right=(abs(x - xs) < 1e-6)) if abs(x - xe) > 1e-6 else Y(g, x, right=False) for x, g in pts],
-                        color=C_GROUND, lw=1.0, zorder=4)
+                        color=color, lw=lw, zorder=z)
+
+    dem = getattr(prof, 'dem', None)
+    _ground_line(prof.ground or dem, gfun, C_GROUND, 1.0, 4)           # 설계 지반선(맨홀 지반고 연결)
+    if dem and prof.ground:                                            # 실측 표고점(DEM) 지반선 — 추가선
+        _ground_line(dem, prof.dem_at, C_DEM, 1.1, 4.5)
     for i, p in enumerate(prof.pipes):
         a, b = prof.seg[i]
         if p.il_up is None or p.il_dn is None:
@@ -370,8 +374,13 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         c = C_ASB if getattr(p, 'asb', False) else (C_PRESS if '압송' in (p.kind or '') else C_PIPE)
         dv = dat_at(a)
         Yp = lambda el: 117 + (el - dv) * vex
-        ax.plot([a, b], [Yp(p.il_up), Yp(p.il_dn)], color=c, lw=0.9, zorder=4)
-        ax.plot([a, b], [Yp(p.il_up + p.d), Yp(p.il_dn + p.d)], color=c, lw=0.9, zorder=4)
+        if p.ilp:                                   # 압송관 — 중간 관저고(오르내림) 꺾은선
+            xs = [a + (b - a) * f for f, _ in p.ilp]
+            ax.plot(xs, [Yp(y) for _, y in p.ilp], color=c, lw=0.9, zorder=4)
+            ax.plot(xs, [Yp(y + p.d) for _, y in p.ilp], color=c, lw=0.9, zorder=4)
+        else:
+            ax.plot([a, b], [Yp(p.il_up), Yp(p.il_dn)], color=c, lw=0.9, zorder=4)
+            ax.plot([a, b], [Yp(p.il_up + p.d), Yp(p.il_dn + p.d)], color=c, lw=0.9, zorder=4)
 
     # ---- 맨홀 + 45° 인출선
     lead = []
