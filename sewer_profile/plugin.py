@@ -4,6 +4,8 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
+from .i18n import tr
+
 
 class SewerProfilePlugin(object):
     def __init__(self, iface):
@@ -13,7 +15,7 @@ class SewerProfilePlugin(object):
 
     def initGui(self):
         icon = QIcon(os.path.join(os.path.dirname(__file__), 'icon.svg'))
-        self.action = QAction(icon, '종단도 (Sewer Profile)', self.iface.mainWindow())
+        self.action = QAction(icon, tr('종단도 (Sewer Profile)', 'Sewer Profile'), self.iface.mainWindow())
         self.action.setCheckable(True)
         self.action.toggled.connect(self.toggle)
         self.iface.addToolBarIcon(self.action)

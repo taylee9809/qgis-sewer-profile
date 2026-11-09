@@ -16,7 +16,8 @@ from qgis.gui import QgsMapLayerComboBox, QgsVertexMarker, QgsRubberBand, QgsChe
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 
 from .network import (read_pipes, merge_layers, downstream_closure, pick_fields, PIPE_FIELDS, MH_FIELDS,
-                      Network, Profile, Manholes)
+                      Network, Profile, Manholes, is_press)
+from .i18n import tr
 from .profile_canvas import ProfileCanvas
 
 ROLE = Qt.UserRole + 1
@@ -118,7 +119,7 @@ class FlowArrow(QWidget):
         super().__init__(parent)
         self.setMinimumWidth(36)
         self.setFixedHeight(18)
-        self.setToolTip('유향 — 상류에서 방류 쪽')
+        self.setToolTip(tr('유향 — 상류에서 방류 쪽', 'Flow direction — upstream to outfall'))
 
     def paintEvent(self, ev):
         pa = QPainter(self)
@@ -143,7 +144,7 @@ class ProfileToolbar(NavigationToolbar2QT):
 
 class ProfileDock(QDockWidget):
     def __init__(self, iface, parent=None):
-        super().__init__('종단도 (Sewer Profile)', parent)
+        super().__init__(tr('종단도 (Sewer Profile)', 'Sewer Profile'), parent)
         self.setObjectName('SewerProfileDock')
         self.iface = iface
         self.canvas_map = iface.mapCanvas()
@@ -159,29 +160,36 @@ class ProfileDock(QDockWidget):
 
         # --- 상단 설정 줄
         row = QHBoxLayout()
-        row.addWidget(QLabel('노선'))
+        row.addWidget(QLabel(tr('노선', 'Lines')))
         self.cb_lines = QgsCheckableComboBox()
-        self.cb_lines.setDefaultText('노선 레이어를 체크')
-        self.cb_lines.setToolTip('체크한 선 레이어를 모두 한 망으로 합쳐 그린다(여러 개 가능).\n'
-                                 '· 하류가 끊긴 말단은 다른 레이어 관 시점이 1.5 m 안이면 이어 붙인다.\n'
-                                 '· 양 끝이 같은 관은 한 번만 — 판정 필드가 있는 레이어 쪽을 남긴다.\n'
-                                 '· 판정 필드가 없는 레이어(준공도 등)는 기존관(회색)으로 그린다.\n'
-                                 '· 필터는 시작 노선을 고르고, 그 하류는 체크한 레이어에서 방류까지 따라간다.')
+        self.cb_lines.setDefaultText(tr('노선 레이어를 체크', 'Check line layers'))
+        self.cb_lines.setToolTip(tr('체크한 선 레이어를 모두 한 망으로 합쳐 그린다(여러 개 가능).\n'
+                                    '· 하류가 끊긴 말단은 다른 레이어 관 시점이 1.5 m 안이면 이어 붙인다.\n'
+                                    '· 양 끝이 같은 관은 한 번만 — 판정 필드가 있는 레이어 쪽을 남긴다.\n'
+                                    '· 판정 필드가 없는 레이어(준공도 등)는 기존관(회색)으로 그린다.\n'
+                                    '· 필터는 시작 노선을 고르고, 그 하류는 체크한 레이어에서 방류까지 따라간다.',
+                                    'All checked line layers are merged into one network (several allowed).\n'
+                                    '· A dead end is joined to another layer\'s pipe start within 1.5 m.\n'
+                                    '· A pipe with the same two ends is kept once — from the layer with a check-result field.\n'
+                                    '· Layers without a check-result field (as-built etc.) are drawn as existing pipes (grey).\n'
+                                    '· The filter picks the starting pipes; their downstream is followed to the outfall.'))
         row.addWidget(self.cb_lines, 3)
-        self.lb_mh = QLabel('맨홀: -')
-        self.lb_mh.setToolTip('맨홀 레이어는 체크한 노선 레이어마다 짝을 자동으로 찾는다\n'
-                              '(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정).')
+        self.lb_mh = QLabel(tr('맨홀: -', 'Manholes: -'))
+        self.lb_mh.setToolTip(tr('맨홀 레이어는 체크한 노선 레이어마다 짝을 자동으로 찾는다\n'
+                                 '(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정).',
+                                 'A manhole layer is paired automatically with each checked line layer\n'
+                                 '(same GPKG/DB, shared words in the names, overlapping extent).'))
         row.addWidget(self.lb_mh, 2)
         row.addWidget(QLabel('DEM'))
         self.cb_dem = QgsMapLayerComboBox()
         self.cb_dem.setFilters(QgsMapLayerProxyModel.RasterLayer)
         self.cb_dem.setAllowEmptyLayer(True)
         row.addWidget(self.cb_dem, 1)
-        row.addWidget(QLabel('필터'))
+        row.addWidget(QLabel(tr('필터', 'Filter')))
         self.ed_expr = QLineEdit()
-        self.ed_expr.setPlaceholderText("예: \"지구\" IN ('A지구','B지구')")
+        self.ed_expr.setPlaceholderText(tr("예: \"지구\" IN ('A지구','B지구')", "e.g. \"zone\" IN ('A','B')"))
         row.addWidget(self.ed_expr, 3)
-        self.bt_build = QPushButton('트리 새로고침')
+        self.bt_build = QPushButton(tr('트리 새로고침', 'Refresh tree'))
         row.addWidget(self.bt_build)
         lay.addLayout(row)
 
@@ -191,15 +199,17 @@ class ProfileDock(QDockWidget):
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
         rowf = QHBoxLayout()
-        rowf.addWidget(QLabel('찾기'))
+        rowf.addWidget(QLabel(tr('찾기', 'Find')))
         self.ed_find = QLineEdit()
-        self.ed_find.setPlaceholderText('관번호·지구 일부 (예: SW-A-020, SW-109, A지구)')
+        self.ed_find.setPlaceholderText(tr('관번호·지구 일부 (예: SW-A-020, SW-109, A지구)',
+                                           'Part of a pipe ID or zone (e.g. SW-A-020, SW-109)'))
         self.ed_find.setClearButtonEnabled(True)
-        self.ed_find.setToolTip('구간에 속한 관번호 전부를 뒤진다 — 중간 관번호로도 그 구간을 찾는다.')
+        self.ed_find.setToolTip(tr('구간에 속한 관번호 전부를 뒤진다 — 중간 관번호로도 그 구간을 찾는다.',
+                                   'Searches every pipe ID in a run — a pipe in the middle finds its run too.'))
         rowf.addWidget(self.ed_find)
         ll.addLayout(rowf)
         self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(['구간', '연장 m'])
+        self.tree.setHeaderLabels([tr('구간', 'Run'), tr('연장 m', 'Length m')])
         self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.tree.setAlternatingRowColors(True)
         self.tree.setUniformRowHeights(True)
@@ -220,33 +230,37 @@ class ProfileDock(QDockWidget):
         ll.addWidget(self.tree)
         opt = QHBoxLayout()
         opt.setSpacing(0)
-        self.chk_up = QPushButton('상류')
+        self.chk_up = QPushButton(tr('상류', 'Upstream'))
         self.chk_up.setCheckable(True)
-        self.chk_up.setToolTip('선택한 구간의 상류 본선(가장 긴 상류)까지 이어서 그린다')
-        self.chk_down = QPushButton('방류')
+        self.chk_up.setToolTip(tr('선택한 구간의 상류 본선(가장 긴 상류)까지 이어서 그린다',
+                                  'Extend the selected run up its main line (longest upstream)'))
+        self.chk_down = QPushButton(tr('방류', 'Outfall'))
         self.chk_down.setCheckable(True)
-        self.chk_down.setToolTip('선택한 구간부터 하류 방류점까지 이어서 그린다')
+        self.chk_down.setToolTip(tr('선택한 구간부터 하류 방류점까지 이어서 그린다',
+                                    'Extend the selected run down to the outfall'))
         arrow = FlowArrow()
         for wg in (self.chk_up, arrow, self.chk_down):
             opt.addWidget(wg, 1 if wg is arrow else 0)
         ll.addLayout(opt)
         opt2 = QHBoxLayout()
-        opt2.addWidget(QLabel('관로'))
+        opt2.addWidget(QLabel(tr('관로', 'Pipes')))
         self.cb_color = QComboBox()
-        self.cb_color.addItem('수리계산 결과', 'judge')
-        self.cb_color.addItem('자연유하 · 압송', 'kind')
-        self.cb_color.setToolTip('수리계산 결과 = 금회_수리판정 값별 색 / 자연유하·압송 = 구분별 색.\n'
-                                 '고른 쪽 범례가 종단 그림에 들어간다.')
+        self.cb_color.addItem(tr('수리계산 결과', 'Hydraulic result'), 'judge')
+        self.cb_color.addItem(tr('자연유하 · 압송', 'Gravity · Force main'), 'kind')
+        self.cb_color.setToolTip(tr('수리계산 결과 = 금회_수리판정 값별 색 / 자연유하·압송 = 구분별 색.\n'
+                                    '고른 쪽 범례가 종단 그림에 들어간다.',
+                                    'Hydraulic result = colour by check-result value / Gravity · Force main = colour by type.\n'
+                                    'The chosen legend is drawn on the profile.'))
         opt2.addWidget(self.cb_color)
-        self.chk_lab = QCheckBox('라벨')
+        self.chk_lab = QCheckBox(tr('라벨', 'Labels'))
         self.chk_lab.setChecked(True)
         opt2.addWidget(self.chk_lab)
         ll.addLayout(opt2)
         opt3 = QHBoxLayout()
-        opt3.addWidget(QLabel('표시'))
+        opt3.addWidget(QLabel(tr('표시', 'Style')))
         self.cb_style = QComboBox()
-        self.cb_style.addItem('종단면도 성과품', 'drawing')
-        self.cb_style.addItem('간단', 'simple')
+        self.cb_style.addItem(tr('종단면도 성과품', 'Profile drawing'), 'drawing')
+        self.cb_style.addItem(tr('간단', 'Simple'), 'simple')
         opt3.addWidget(self.cb_style)
         opt3.addWidget(QLabel('V'))
         self.cb_vex = QComboBox()
@@ -267,21 +281,25 @@ class ProfileDock(QDockWidget):
         for a in self.tb.actions():
             t = a.text() or ''
             if t.startswith('Pan'):
-                a.setToolTip('이동 — 드래그로 화면 옮기기 (끄면 커서 추적 재개)')
+                a.setToolTip(tr('이동 — 드래그로 화면 옮기기 (끄면 커서 추적 재개)',
+                                'Pan — drag to move the view (turn off to resume cursor tracking)'))
             elif t.startswith('Zoom'):
                 a.setIcon(_icon_crop())
-                a.setToolTip('확대 — 영역을 드래그 (휠로도 확대·축소)')
+                a.setToolTip(tr('확대 — 영역을 드래그 (휠로도 확대·축소)', 'Zoom — drag a box (the mouse wheel zooms too)'))
             elif t.startswith('Save'):
-                a.setText('캡처')
+                a.setText(tr('캡처', 'Capture'))
                 a.setIcon(_icon_camera())
-                a.setToolTip('캡처 — 지금 화면을 그림 파일로 저장')
-        self.act_mark = QAction(_icon_pen(), '표시', self.tb)
+                a.setToolTip(tr('캡처 — 지금 화면을 그림 파일로 저장', 'Capture — save the current view as an image'))
+        self.act_mark = QAction(_icon_pen(), tr('표시', 'Mark'), self.tb)
         self.act_mark.setCheckable(True)
-        self.act_mark.setToolTip('표시 — 켜고 종단을 클릭하면 그 자리에 마크를 찍는다.\n'
-                                 '마크를 다시 클릭하면 지워진다. 관 번호와 위치로 저장돼 다시 열어도 남는다.')
-        self.bt_big = QAction(_icon_expand(), '크게 보기', self.tb)
+        self.act_mark.setToolTip(tr('표시 — 켜고 종단을 클릭하면 그 자리에 마크를 찍는다.\n'
+                                    '마크를 다시 클릭하면 지워진다. 관 번호와 위치로 저장돼 다시 열어도 남는다.',
+                                    'Mark — turn on and click the profile to place a mark there.\n'
+                                    'Click a mark again to remove it. Marks are saved by pipe and position, so they stay.'))
+        self.bt_big = QAction(_icon_expand(), tr('크게 보기', 'Full screen'), self.tb)
         self.bt_big.setCheckable(True)
-        self.bt_big.setToolTip('크게 보기 — 패널을 화면 가득. 다시 누르거나 Esc 로 원래 자리.')
+        self.bt_big.setToolTip(tr('크게 보기 — 패널을 화면 가득. 다시 누르거나 Esc 로 원래 자리.',
+                                  'Full screen — the panel fills the screen. Press again or Esc to restore.'))
         acts = self.tb.actions()
         self.tb.insertAction(acts[-1], self.act_mark)
         self.tb.insertSeparator(acts[-1])
@@ -406,10 +424,11 @@ class ProfileDock(QDockWidget):
     def _tokens(name):
         out = set()
         for t in re.split(r'[^0-9A-Za-z가-힣]+', name or ''):
-            for g in ('맨홀', '관로', '노선'):
+            t = t.lower()
+            for g in ('맨홀', '관로', '노선', 'manholes', 'manhole', 'pipes', 'pipe', 'lines', 'line'):
                 t = t.replace(g, '')
             if t:
-                out.add(t.lower())
+                out.add(t)
         return out
 
     def _pair_manhole(self, line):
@@ -446,7 +465,8 @@ class ProfileDock(QDockWidget):
     def build_tree(self):
         layers = self._checked_layers()
         if not layers:
-            QMessageBox.information(self, '종단도', '노선 레이어를 하나 이상 체크하세요.')
+            QMessageBox.information(self, tr('종단도', 'Sewer Profile'),
+                                    tr('노선 레이어를 하나 이상 체크하세요.', 'Check at least one line layer.'))
             return
         has_judge = lambda l: pick_fields(l, {'j': PIPE_FIELDS['judge']})['j'] is not None
         layers.sort(key=lambda l: not has_judge(l))  # 판정 필드 있는 레이어(설계 노선)를 앞에 — 중복이면 이쪽을 남긴다
@@ -461,14 +481,16 @@ class ProfileDock(QDockWidget):
                     seeds_raw += [(l.id(), f.id()) for f in l.getFeatures(req)]
             pipes, info = merge_layers(lp)
         except Exception as e:
-            QMessageBox.warning(self, '종단도', '노선을 읽지 못했습니다: %s' % e)
+            QMessageBox.warning(self, tr('종단도', 'Sewer Profile'),
+                                tr('노선을 읽지 못했습니다: %s', 'Could not read the lines: %s') % e)
             return
         if expr:
             seeds = set(info['fidmap'][k] for k in seeds_raw if k in info['fidmap'])
             keep = downstream_closure(pipes, seeds)
             pipes = {k: v for k, v in pipes.items() if k in keep}
             if not pipes:
-                QMessageBox.information(self, '종단도', '필터에 걸리는 관이 없습니다.')
+                QMessageBox.information(self, tr('종단도', 'Sewer Profile'),
+                                        tr('필터에 걸리는 관이 없습니다.', 'No pipes match the filter.'))
                 return
         self.layers, self.info = layers, info
         self.layer = layers[0]
@@ -482,11 +504,13 @@ class ProfileDock(QDockWidget):
             if m is not None and m not in mhs:
                 mhs.append(m)
         self.mh = Manholes(mhs) if mhs else None
-        pairs = ['%s → %s' % (l.name(), (self._pair_manhole(l).name() if self._pair_manhole(l) else '(맨홀 없음)'))
+        pairs = ['%s → %s' % (l.name(), (self._pair_manhole(l).name() if self._pair_manhole(l) else tr('(맨홀 없음)', '(no manholes)')))
                  for l in layers]
-        self.lb_mh.setText('맨홀: ' + (', '.join(m.name() for m in mhs) if mhs else '없음'))
-        self.lb_mh.setToolTip('노선 ↔ 맨홀 자동 짝\n' + '\n'.join(pairs) +
-                              '\n\n(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정. 겹치는 자리는 앞 줄 맨홀 우선)')
+        self.lb_mh.setText(tr('맨홀: ', 'Manholes: ') + (', '.join(m.name() for m in mhs) if mhs else tr('없음', 'none')))
+        self.lb_mh.setToolTip(tr('노선 ↔ 맨홀 자동 짝\n', 'Line ↔ manhole auto pairing\n') + '\n'.join(pairs) +
+                              tr('\n\n(같은 GPKG·DB, 이름의 공통 낱말, 범위 겹침으로 판정. 겹치는 자리는 앞 줄 맨홀 우선)',
+                                 '\n\n(Same GPKG/DB, shared words in the names, overlapping extent. '
+                                 'Where they overlap, the manhole layer listed first wins)'))
         self._save()
         self.tree.blockSignals(True)
         self.tree.clear()
@@ -498,9 +522,10 @@ class ProfileDock(QDockWidget):
         def add(parent, rid, main, root=False):
             r = net.runs[rid]
             fids = r['pipes']
-            pump = any('압송' in (net.pipes[i].kind or '') for i in fids)
+            pump = any(is_press(net.pipes[i].kind) for i in fids)
             asb = all(getattr(net.pipes[i], 'asb', False) for i in fids)
-            it = QTreeWidgetItem([net.run_short(r) + ('  (준공)' if asb else '') + ('  (압송)' if pump else ''),
+            it = QTreeWidgetItem([net.run_short(r) + (tr('  (준공)', '  (as-built)') if asb else '') +
+                                  (tr('  (압송)', '  (force main)') if pump else ''),
                                   format(r['length'], ',.1f')])
             it.setData(0, ROLE, rid)
             it.setData(0, ROLE_TXT, ' '.join(net.pipes[i].name for i in fids).upper())
@@ -509,15 +534,16 @@ class ProfileDock(QDockWidget):
             it.setFont(0, fo)
             it.setFont(1, QFont(self.mono))
             it.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
-            tip = '%s\n관 %d개 · 연장 %.1f m · 본선 상류연장 %.1f m' % (
+            tip = tr('%s\n관 %d개 · 연장 %.1f m · 본선 상류연장 %.1f m',
+                     '%s\n%d pipes · length %.1f m · main upstream length %.1f m') % (
                 net.run_label(r), len(fids), r['length'], r['up_length'])
             if pump:
-                tip += '\n압송 포함'
+                tip += tr('\n압송 포함', '\nIncludes force main')
             z0 = net.pipes[fids[0]].zone
             if z0:
-                tip += '\n지구: %s' % z0
+                tip += tr('\n지구: %s', '\nZone: %s') % z0
             if asb:
-                tip += '\n준공(기존) 관로 — 준공 레이어에서 이어 붙임'
+                tip += tr('\n준공(기존) 관로 — 준공 레이어에서 이어 붙임', '\nAs-built (existing) pipes — joined from the as-built layer')
             for c in (0, 1):
                 it.setToolTip(c, tip)
                 if asb:
@@ -534,11 +560,11 @@ class ProfileDock(QDockWidget):
         # 지구별로 묶기
         groups = {}
         for r in net.roots():
-            z = net.pipes[r['pipes'][-1]].zone or '(지구없음)'
+            z = net.pipes[r['pipes'][-1]].zone or tr('(지구없음)', '(no zone)')
             groups.setdefault(z, []).append(r['id'])
         for z in sorted(groups):
             tot = sum(subtotal(rid) for rid in groups[z])
-            g = QTreeWidgetItem(['%s   방류 %d' % (z, len(groups[z])), format(tot, ',.0f')])
+            g = QTreeWidgetItem([tr('%s   방류 %d', '%s   outfalls %d') % (z, len(groups[z])), format(tot, ',.0f')])
             g.setFlags(g.flags() & ~Qt.ItemIsSelectable)
             for c in (0, 1):
                 f = g.font(c)
@@ -546,7 +572,8 @@ class ProfileDock(QDockWidget):
                 g.setFont(c, f)
                 g.setBackground(c, GRP_BG)
             g.setTextAlignment(1, Qt.AlignRight | Qt.AlignVCenter)
-            g.setToolTip(0, '%s · 방류 %d 개소 · 총연장 %.1f m' % (z, len(groups[z]), tot))
+            g.setToolTip(0, tr('%s · 방류 %d 개소 · 총연장 %.1f m', '%s · %d outfalls · total length %.1f m') % (
+                z, len(groups[z]), tot))
             self.tree.addTopLevelItem(g)
             for rid in groups[z]:
                 add(g, rid, True, True)           # 방류 루트 = 본선 끝 → 굵게
@@ -556,14 +583,16 @@ class ProfileDock(QDockWidget):
         self._item_map = self._items_by_run()
         self._apply_find()
         njun = sum(1 for n, v in net.inn.items() if len(v) >= 2)
-        info = '관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d' % (
+        info = tr('관 %d개 · 구간 %d개 · 합류점 %d · 방류 %d', '%d pipes · %d runs · %d junctions · %d outfalls') % (
             len(net.pipes), len(net.runs), njun, len(net.roots()))
         if len(self.layers) > 1:
             a = self.info
-            info += '\n레이어 %d개 합침 · 레이어 간 접속 %d곳 · 중복 %d개 제외' % (len(self.layers), len(a['joins']), a['dup'])
+            info += tr('\n레이어 %d개 합침 · 레이어 간 접속 %d곳 · 중복 %d개 제외',
+                       '\n%d layers merged · %d cross-layer joins · %d duplicates dropped') % (
+                len(self.layers), len(a['joins']), a['dup'])
             far = [j for j in a['joins'] if j[2] >= 0.05]
             if far:
-                info += '\n좌표 보정: ' + ', '.join('%s→%s %.2fm' % j for j in far)
+                info += tr('\n좌표 보정: ', '\nSnapped: ') + ', '.join('%s→%s %.2fm' % j for j in far)
         self.lb_info.setText(info)
 
     def _apply_find(self, txt=None):
@@ -601,7 +630,8 @@ class ProfileDock(QDockWidget):
         seq = net.order_runs(rids)
         if seq is None:
             seq = [rids[-1]]
-            self.lb_info.setText('선택한 구간들이 한 하류 경로 위에 있지 않아 마지막 것만 그립니다.')
+            self.lb_info.setText(tr('선택한 구간들이 한 하류 경로 위에 있지 않아 마지막 것만 그립니다.',
+                                    'The selected runs are not on one downstream path, so only the last one is drawn.'))
         if self.chk_up.isChecked():
             seq = net.main_upstream(seq[0])[:-1] + seq
         if self.chk_down.isChecked():
@@ -611,7 +641,7 @@ class ProfileDock(QDockWidget):
         self._apply_marks(self.prof)
         self._sample_dem(self.prof)
         a, b = net.pipes[fids[0]].name, net.pipes[fids[-1]].name
-        self.title = '%s → %s   (관 %d개, %.1f m)' % (a, b, len(fids), self.prof.total)
+        self.title = tr('%s → %s   (관 %d개, %.1f m)', '%s → %s   (%d pipes, %.1f m)') % (a, b, len(fids), self.prof.total)
         self.redraw()
         self._show_band()
         self._show_marks_on_map()
@@ -756,7 +786,9 @@ class ProfileDock(QDockWidget):
         fm = self.info['fidmap']
         fids = [f for f in (fm.get(k) for k in sel) if f in self.net.run_of]
         if not fids:
-            self.lb_info.setText('고른 관 %d개는 지금 종단 망에 없습니다(필터 밖이거나 하류로 이어지지 않음).' % len(sel))
+            self.lb_info.setText(tr('고른 관 %d개는 지금 종단 망에 없습니다(필터 밖이거나 하류로 이어지지 않음).',
+                                    '%d selected pipes are not in the current network '
+                                    '(outside the filter or not connected downstream).') % len(sel))
             return
         rids = list(dict.fromkeys(self.net.run_of[f] for f in fids))
         self._focus_fid = fids[0] if len(fids) == 1 else None

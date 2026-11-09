@@ -6,30 +6,43 @@ QGIS 객체는 읽기에만 쓰고 계산은 순수 파이썬으로 한다(테�
 import math
 import re
 
-# 필드 이름 후보 — 앞에서부터 레이어에 있는 것을 쓴다
+from .i18n import tr
+
+# 필드 이름 후보 — 앞에서부터 레이어에 있는 것을 쓴다(한글 이름 다음에 영어 이름)
 PIPE_FIELDS = {
     'name': ['관번호', 'pipe_id', 'name'],
-    'il_up': ['상류관저고', 'il_up'],
-    'il_dn': ['하류관저고', 'il_dn'],
-    'dia': ['관경', 'dia_mm'],
+    'il_up': ['상류관저고', 'il_up', 'inv_up'],
+    'il_dn': ['하류관저고', 'il_dn', 'inv_dn'],
+    'dia': ['관경', 'dia_mm', 'diameter'],
     'gl_up': ['상류지반고', 'gl_up'],
-    'kind': ['구분', 'kind'],
+    'kind': ['구분', 'kind', 'type'],
     'obs': ['종단지장물', 'obstacles'],
-    'judge': ['금회_수리판정', '수리판정'],
+    'judge': ['금회_수리판정', '수리판정', 'check'],
     'judge_w': ['수리판정'],
-    'zone': ['지구'],
-    'slope': ['경사퍼밀'],
-    'flow': ['금회_누가유량_m3d', '누가유량_m3d'],
-    'vel': ['금회_실유속_mps', '실유속_mps'],
-    'ftype': ['자연유하/압송'],
-    'ilp': ['압송_종단'],       # '거리:관저고;거리:관저고…' — 압송관의 중간 관저고(오르내림)
+    'zone': ['지구', 'zone'],
+    'slope': ['경사퍼밀', 'slope_permil'],
+    'flow': ['금회_누가유량_m3d', '누가유량_m3d', 'flow_m3d'],
+    'vel': ['금회_실유속_mps', '실유속_mps', 'vel_mps'],
+    'ftype': ['자연유하/압송', 'flow_type'],
+    'ilp': ['압송_종단', 'inv_profile'],       # '거리:관저고;거리:관저고…' — 압송관의 중간 관저고(오르내림)
 }
 MH_FIELDS = {
-    'name': ['맨홀번호', 'name'],
+    'name': ['맨홀번호', 'name', 'mh_id'],
     'gl': ['지반고', 'gl'],
-    'kind': ['구분'],
-    'type': ['맨홀호수', '맨홀규격'],
+    'kind': ['구분', 'kind'],
+    'type': ['맨홀호수', '맨홀규격', 'mh_type'],
 }
+
+
+def is_press(kind):
+    # 구분 값이 압송인지 — 한글('압송')과 영어('force main', 'pressure', 'rising main')
+    k = (kind or '').lower()
+    return '압송' in k or 'force' in k or 'press' in k or 'rising' in k
+
+
+def is_pump(kind):
+    k = (kind or '').lower()
+    return '펌프' in k or 'pump' in k
 
 SNAP = 0.05   # 끝점 동일 판정(m)
 
@@ -88,7 +101,7 @@ def parse_obstacles(text):
             else:
                 d = float(spec)
                 w = h = d / 1000.0 if d > 20 else d
-        kind = m.group('kind').strip() or '지장물'
+        kind = m.group('kind').strip() or tr('지장물', 'Utility')
         if shape == 'circle' and w is None:
             w = h = 0.3
         out.append(dict(kind=kind, spec=spec, sta=float(m.group('sta')), el=float(m.group('el')),
@@ -181,7 +194,7 @@ def read_pipes(layer, expression=None):
         p.zone = g('zone')
         p.slope, p.flow, p.vel = _num(g('slope')), _num(g('flow')), _num(g('vel'))
         p.ftype = str(g('ftype') or '')
-        p.asb = p.kind.strip() == '기존'          # 노선에 편입된 준공관(구분=기존)은 기존관으로 표시
+        p.asb = p.kind.strip().lower() in ('기존', 'existing')   # 노선에 편입된 준공관(구분=기존)은 기존관으로 표시
         pipes[p.fid] = p
     return pipes
 
@@ -220,7 +233,7 @@ def merge_layers(layers):
             p.pts = list(p.pts)
             if existing:
                 p.asb = True
-                p.kind = '기존 ' + ('압송' if '압송' in (p.ftype or '') + (p.kind or '') else '자연유하')
+                p.kind = '기존 ' + ('압송' if is_press((p.ftype or '') + (p.kind or '')) else '자연유하')
                 p.judge = p.judge_w = None
             out[nf] = p
             src[nf] = k
@@ -430,7 +443,7 @@ class Profile(object):
                     n['mh_kind'] = str(mh.get('type') or mh.get('kind') or '')
                     k = self.nodes.index(n)
                     p = self.pipes[min(k, len(self.pipes) - 1)]
-                    if getattr(p, 'asb', False) and '펌프' not in n['mh_kind'] and '기존' not in n['mh_kind']:
+                    if getattr(p, 'asb', False) and not is_pump(n['mh_kind']) and '기존' not in n['mh_kind']:
                         n['mh_kind'] = '기존 ' + n['mh_kind']      # 기존관 구간 맨홀은 '1호기존'으로
                 else:
                     n['mh'] = n is not self.nodes[-1] and not (self._is_sub(n['name']))

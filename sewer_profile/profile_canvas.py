@@ -19,11 +19,20 @@ for _f in ('Malgun Gothic', 'NanumGothic', 'AppleGothic'):
         continue
 matplotlib.rcParams['axes.unicode_minus'] = False
 
+from .i18n import tr
+from .network import is_press
+
 # 간단식 색 — 흰 바탕에 가라앉은 톤, 색은 관에만 주고 글자는 먹색으로
 JUDGE_COLOR = {'GOOD': '#3f8f5f', 'LESS0.6': '#c6882c', '유량없음': '#9aa3ad',
                '만관초과': '#bf4a44', 'UPPR3.0': '#7a6bb0', '역경사/0': '#bf4a44'}
-JUDGE_LABEL = {'GOOD': 'GOOD (기준 만족)', 'LESS0.6': 'LESS0.6 (유속<0.6)',
-               'UPPR3.0': 'UPPR3.0 (유속>3.0)'}
+# 범례 글자 — 키(판정값)는 데이터 그대로, 보이는 글자만 바꾼다
+JUDGE_LABEL = {'GOOD': tr('GOOD (기준 만족)', 'GOOD (meets criteria)'),
+               'LESS0.6': tr('LESS0.6 (유속<0.6)', 'LESS0.6 (velocity<0.6)'),
+               'UPPR3.0': tr('UPPR3.0 (유속>3.0)', 'UPPR3.0 (velocity>3.0)'),
+               '만관초과': tr('만관초과', 'Over full'), '역경사/0': tr('역경사/0', 'Adverse/zero slope'),
+               '유량없음': tr('유량없음', 'No flow'), '미판정': tr('미판정', 'Not checked'),
+               '자연유하': tr('자연유하', 'Gravity'), '압송': tr('압송', 'Force main'),
+               '준공(기존)': tr('준공(기존)', 'As-built (existing)')}
 JUDGE_ORDER = ['GOOD', 'LESS0.6', 'UPPR3.0', '만관초과', '역경사/0', '유량없음', '미판정',
                '자연유하', '압송', '준공(기존)']
 NOJUDGE = '#4b5563'         # 판정값 없음 — 지반(회색)과 구분되게 진하게
@@ -96,7 +105,7 @@ class ProfileCanvas(FigureCanvas):
 
     def _empty(self):
         self.ax.clear()
-        self.ax.text(0.5, 0.5, '왼쪽 트리에서 노선을 선택하세요', ha='center', va='center',
+        self.ax.text(0.5, 0.5, tr('왼쪽 트리에서 노선을 선택하세요', 'Select a run in the tree on the left'), ha='center', va='center',
                      transform=self.ax.transAxes, color='#888')
         self.ax.set_xticks([])
         self.ax.set_yticks([])
@@ -156,7 +165,7 @@ class ProfileCanvas(FigureCanvas):
             x0, x1 = prof.seg[i]
             if p.il_up is None or p.il_dn is None:
                 continue
-            press = '압송' in (p.kind or '')
+            press = is_press(p.kind)
             if getattr(p, 'asb', False):
                 c, key = ASB, '준공(기존)'
             elif self.color_mode == 'judge' and not press:
@@ -200,7 +209,7 @@ class ProfileCanvas(FigureCanvas):
                 ymax.append(top)
                 if self.show_labels:
                     # 맨홀 번호(위)와 겹치지 않게 지장물 라벨은 아래로
-                    lab = '%s%s\n저면 %.2f' % (o['kind'], (' D' + o['spec']) if o['spec'] else '', o['el'])
+                    lab = tr('%s%s\n저면 %.2f', '%s%s\nbottom %.2f') % (o['kind'], (' D' + o['spec']) if o['spec'] else '', o['el'])
                     ax.annotate(lab, (xo, o['el']), xytext=(0, -6), textcoords='offset points',
                                 ha='center', va='top', fontsize=6.4, color=INK2, zorder=7)
         # 맨홀
@@ -228,7 +237,7 @@ class ProfileCanvas(FigureCanvas):
         ax.set_xlim(-prof.total * 0.01, prof.total * 1.01)
         if gline:                                        # 지반 아래 — 아주 옅게
             ax.fill_between(gline[0], gline[1], ax.get_ylim()[0], color=EARTH, lw=0, zorder=0)
-        ax.set_xlabel('누가거리 (m)', fontsize=8.5, color=INK2)
+        ax.set_xlabel(tr('누가거리 (m)', 'Chainage (m)'), fontsize=8.5, color=INK2)
         ax.set_ylabel('EL (m)', fontsize=8.5, color=INK2)
         ax.tick_params(labelsize=8, colors=INK2, length=3, width=0.8)
         ax.set_axisbelow(True)
@@ -379,21 +388,21 @@ class ProfileCanvas(FigureCanvas):
         p = prof.pipes[i]
         dem = getattr(prof, 'dem', None)
         gl = prof.ground_at(s) if prof.ground else (prof.dem_at(s) if dem else None)
-        lines = ['측점 %.2f m' % s, p.name + (' (압송)' if '압송' in (p.kind or '') else '')]
+        lines = [tr('측점 %.2f m', 'Sta. %.2f m') % s, p.name + (tr(' (압송)', ' (force main)') if is_press(p.kind) else '')]
         if gl is not None:
-            lines.append('지반고 %.2f' % gl)
+            lines.append(tr('지반고 %.2f', 'GL %.2f') % gl)
         if dem and prof.ground:
-            lines.append('실측 지반 %.2f' % prof.dem_at(s))
+            lines.append(tr('실측 지반 %.2f', 'Surveyed GL %.2f') % prof.dem_at(s))
         if il is not None:
-            lines.append('관저고 %.2f  D%d' % (il, round(p.d * 1000)))
+            lines.append(tr('관저고 %.2f  D%d', 'IL %.2f  D%d') % (il, round(p.d * 1000)))
         if gl is not None and il is not None:
-            lines.append('토피 %.2f' % (gl - il - p.d))
+            lines.append(tr('토피 %.2f', 'Cover %.2f') % (gl - il - p.d))
         if p.slope is not None:
-            lines.append('경사 %.2f‰' % p.slope)
+            lines.append(tr('경사 %.2f‰', 'Slope %.2f‰') % p.slope)
         if p.flow is not None:
-            lines.append('누가 %.1f ㎥/일' % p.flow)
+            lines.append(tr('누가 %.1f ㎥/일', 'Flow %.1f m³/d') % p.flow)
         if p.vel is not None:
-            lines.append('유속 %.3f m/s %s' % (p.vel, p.judge or ''))
+            lines.append(tr('유속 %.3f m/s %s', 'Vel. %.3f m/s %s') % (p.vel, p.judge or ''))
         self._vline.set_xdata([s, s])
         self._vline.set_visible(True)
         if self._Y is not None:

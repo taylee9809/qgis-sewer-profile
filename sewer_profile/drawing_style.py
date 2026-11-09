@@ -11,7 +11,11 @@ from matplotlib.font_manager import FontProperties
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Ellipse, Rectangle, Polygon, Circle
 
-BANDS = ['측    점', '거    리', '추가거리', '지 반 고', '관 저 고', '토    피', '구    배']
+from .i18n import tr
+from .network import is_press, is_pump
+
+BANDS = tr(['측    점', '거    리', '추가거리', '지 반 고', '관 저 고', '토    피', '구    배'],
+           ['STATION', 'DISTANCE', 'CUM. DIST.', 'GROUND EL.', 'INVERT EL.', 'COVER', 'SLOPE'])
 C_GROUND = '#d62728'
 C_DEM = '#f59e0b'          # 실측 표고점(DEM) 지반선 — 주황
 C_PIPE = '#1f3fd1'
@@ -136,13 +140,13 @@ def _fmt_sta(s):
 
 def _mh_kind(n):
     k = (n.get('mh_kind') or '')
-    if '펌프' in k:
-        return '맨홀펌프장'
-    if '기존' in k:
-        return '1호기존'
+    if is_pump(k):
+        return tr('맨홀펌프장', 'PUMP MH')
+    if '기존' in k or 'exist' in k.lower():
+        return tr('1호기존', 'EXIST. MH')
     if k:
-        return '1호맨홀' if k in ('계획맨홀', '1호맨홀') else k
-    return '1호맨홀'
+        return tr('1호맨홀', 'MH') if k in ('계획맨홀', '1호맨홀') else k
+    return tr('1호맨홀', 'MH')
 
 
 def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
@@ -336,7 +340,9 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
             T.add((a + b) / 2, 126.75, 'L=%.2fM' % p.length, h=min(h, 2.5), ha='center', va='center')
     runs = []
     for i, p in enumerate(prof.pipes):
-        key = (('기존' if getattr(p, 'asb', False) else '신설') + ('압송' if '압송' in (p.kind or '') else '오수'),
+        asb, press = getattr(p, 'asb', False), is_press(p.kind)
+        key = (tr(('기존' if asb else '신설') + ('압송' if press else '오수'),
+                  ('EXIST. ' if asb else 'NEW ') + ('FORCE MAIN' if press else 'SEWER')),
                round(p.d * 1000))
         if runs and runs[-1][0] == key:
             runs[-1][2] = prof.seg[i][1]
@@ -371,7 +377,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
         a, b = prof.seg[i]
         if p.il_up is None or p.il_dn is None:
             continue
-        c = C_ASB if getattr(p, 'asb', False) else (C_PRESS if '압송' in (p.kind or '') else C_PIPE)
+        c = C_ASB if getattr(p, 'asb', False) else (C_PRESS if is_press(p.kind) else C_PIPE)
         dv = dat_at(a)
         Yp = lambda el: 117 + (el - dv) * vex
         if p.ilp:                                   # 압송관 — 중간 관저고(오르내림) 꺾은선
@@ -393,7 +399,7 @@ def draw_sheet(ax, prof, vex=5.0, labels=True, title=''):
             continue
         bot = min(ilm)
         x = n['x']
-        wo = 1.5 + 0.4 if '펌프' in (n.get('mh_kind') or '') else 0.9 + 0.4
+        wo = 1.5 + 0.4 if is_pump(n.get('mh_kind')) else 0.9 + 0.4
         rt = n is not prof.nodes[-1]
         Ym = lambda el: Y(el, x, right=rt)
         ax.add_patch(Rectangle((x - wo / 2, Ym(bot - 0.4)), wo, Ym(gl) - Ym(bot - 0.4), fill=False, ec=C_MH, lw=0.8, zorder=5))

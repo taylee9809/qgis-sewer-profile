@@ -5,7 +5,7 @@ English | [한국어](README.md)
 Splits a sewer network into a **tree of runs between junctions** and draws the **longitudinal profile** of the selected run in a QGIS bottom panel.
 Hover over a pipe on the map and a red dot follows the line while the profile shows the same chainage (it also works from profile to map).
 
-> The plugin UI and the default field names are in Korean (Korean sewer design practice). See [Layer fields](#layer-fields) for mapping your own field names.
+> The UI follows the QGIS language: Korean if QGIS is in Korean, English otherwise. Layer fields can use Korean or English names — see [Layer fields](#layer-fields).
 
 ## Installation
 
@@ -59,17 +59,20 @@ Steps for an AI agent. Humans can skip this.
 - Display: simple — elevation-axis chart, pipe colour (type / hydraulic result)
 
 ## Layer fields
-Default (Korean) field names:
+The plugin uses whichever of the English or Korean names the layer has.
 
-| Purpose | Field |
-|---|---|
-| Pipe ID | `관번호` |
-| Invert levels | `상류관저고` (upstream), `하류관저고` (downstream) |
-| Diameter (mm) | `관경` |
-| Ground level | `상류지반고` (the last node uses manhole layer field `지반고`) |
-| Type | `구분` (force main → pink) |
-| Crossing utilities | `종단지장물` — `횡배수관 D600@13.3(74.70) / BOX D2.00X1.00@3.3(25.50)` (chainage = m from pipe start, brackets = bottom EL) |
-| Check / flow | `금회_수리판정`, `수리판정`, `금회_누가유량_m3d`, `금회_실유속_mps`, `경사퍼밀` |
+| Purpose | English field | Korean field |
+|---|---|---|
+| Pipe ID | `pipe_id`, `name` | `관번호` |
+| Invert levels | `inv_up`/`il_up` (upstream), `inv_dn`/`il_dn` (downstream) | `상류관저고`, `하류관저고` |
+| Diameter (mm) | `diameter`, `dia_mm` | `관경` |
+| Ground level | `gl_up` (the last node uses the manhole layer's `gl`) | `상류지반고` (manhole `지반고`) |
+| Type | `kind`, `type` — a value containing `force main` is drawn as a force main (pink); `existing` = existing pipe | `구분` |
+| Zone | `zone` | `지구` |
+| Crossing utilities | `obstacles` — `Culvert D600@13.3(74.70) / BOX D2.00X1.00@3.3(25.50)` (chainage = m from pipe start, brackets = bottom EL) | `종단지장물` |
+| Force-main intermediate inverts | `inv_profile` — `dist:invert;dist:invert;…` | `압송_종단` |
+| Check / flow | `check` (`GOOD`, `LESS0.6`, `UPPR3.0`, …), `flow_m3d`, `vel_mps`, `slope_permil` | `금회_수리판정`, `금회_누가유량_m3d`, `금회_실유속_mps`, `경사퍼밀` |
+| Manholes | `mh_id`/`name`, `gl`, `mh_type` | `맨홀번호`, `지반고`, `맨홀호수` |
 
 To use other names, add them to the candidate lists `PIPE_FIELDS` / `MH_FIELDS` in `sewer_profile/network.py`.
 Line geometry must run **upstream → downstream**.

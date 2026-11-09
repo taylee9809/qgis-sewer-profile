@@ -1,14 +1,16 @@
 [general]
 name=Sewer Profile Viewer
 qgisMinimumVersion=3.22
-description=하수관로 노선을 분기점 기준 트리로 나누고, 선택한 노선의 종단도(지반고·관저고·맨홀·지장물)를 지도와 연동해 보여준다.
-version=0.7.0
+description=Splits a sewer network into a tree of runs between junctions and draws the longitudinal profile (ground, inverts, manholes, crossing utilities) linked to the map. / 하수관로 노선을 분기점 기준 트리로 나누고, 고른 노선의 종단도를 지도와 연동해 보여준다.
+version=0.8.0
 author=taylee9809
 email=taylee9809@users.noreply.github.com
-about=노선 레이어(관번호·상류/하류관저고·관경·상류지반고·종단지장물)를 읽어 분기점 기준 구간 트리를 만들고, 구간을 고르면 하단 패널에 종단도를 그린다. 지도에서 노선 위에 마우스를 올리면 빨간 점이 노선을 따라가고 종단도에 같은 측점이 표시된다(반대 방향도 동작).
+about=Reads a sewer line layer (pipe ID, up/downstream inverts, diameter, ground level, crossing utilities), builds a tree of runs split at junctions, and draws the profile of the selected run in a bottom panel. Hovering over a pipe moves a red dot along it and marks the same chainage on the profile (and the other way round). The UI follows the QGIS language: Korean or English. / 노선 레이어(관번호·상류/하류관저고·관경·상류지반고·종단지장물)를 읽어 분기점 기준 구간 트리를 만들고, 구간을 고르면 하단 패널에 종단도를 그린다. 화면 언어는 QGIS 언어를 따른다(한국어/영어).
+homepage=https://github.com/taylee9809/qgis-sewer-profile
 repository=https://github.com/taylee9809/qgis-sewer-profile
 tracker=https://github.com/taylee9809/qgis-sewer-profile/issues
 category=Plugins
 icon=icon.svg
 experimental=True
 deprecated=False
+changelog=0.8.0 - English UI (follows the QGIS language), English field-name candidates
